@@ -1,0 +1,44 @@
+# Dependencies
+node_modules
+dist
+dist-ssr
+
+# Rust / Tauri
+src-tauri/target
+src-tauri/gen
+
+# Packaging output + extracted SDK tools (downloaded at build time, not source)
+src-tauri/packaging/build
+src-tauri/packaging/staging
+src-tauri/packaging/sdktools
+*.msix
+*.msixbundle
+*.appx
+
+# Signing certificates (never commit)
+*.pfx
+*.cer
+src-tauri/packaging/_gen-cert.ps1
+
+# Editor
+.vscode
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+
+# Misc logs
+*.log
+src-tauri/packaging/pack.txt
+src-tauri/packaging/packout.txt
+
+# TypeScript build info + compiled vite config artifacts
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js

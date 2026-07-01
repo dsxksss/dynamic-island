@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AppxManifest for the Dynamic Island MSIX. Grants package identity, required
+     by UserNotificationListener. The Publisher MUST match the signing cert.
+
+     This is the minimal, known-working shape for a Win32 desktop bridge
+     (full-trust) app. VisualElements only needs DisplayName + the two logos. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="DynamicIsland"
+    Publisher="CN=Dynamic Island Dev"
+    Version="0.1.0.4"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Dynamic Island</DisplayName>
+    <PublisherDisplayName>Dynamic Island Dev</PublisherDisplayName>
+    <Logo>icons\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+    <Resource Language="zh-cn" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.19041.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Applications>
+    <Application
+      Id="App"
+      Executable="dynamic-island.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Dynamic Island"
+        Description="Dynamic Island"
+        BackgroundColor="transparent"
+        Square150x150Logo="icons\Square150x150Logo.png"
+        Square44x44Logo="icons\Square44x44Logo.png">
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="userNotificationListener" />
+  </Capabilities>
+</Package>

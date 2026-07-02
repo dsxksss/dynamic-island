@@ -4,6 +4,7 @@
 // Visual style: iOS-like — circular avatars, clean title/subtitle layering,
 // generous spacing, each item reads as a polished card.
 
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import type { Notification } from "../lib/types";
@@ -55,12 +56,16 @@ export function NotificationList({
   onDismiss,
   onClearAll,
 }: Props) {
+  // Which item is expanded (full body shown). Null = all collapsed.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   return (
     <div className="flex h-full w-full flex-col px-3 pb-2 pt-3">
       {/* scrollable list */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <AnimatePresence initial={false}>
           {items.map((n) => {
+            const open = expandedId === n.id;
             return (
               <motion.div
                 key={n.id}
@@ -71,16 +76,23 @@ export function NotificationList({
                 transition={{ duration: 0.2 }}
                 onClick={(e) => {
                   e.stopPropagation();
+                  setExpandedId(open ? null : n.id);
                 }}
                 className={
-                  "group mb-2 rounded-2xl px-3 py-2.5 transition-colors hover:bg-white/[0.05]"
+                  "group mb-2 cursor-pointer rounded-2xl px-3 py-2.5 transition-colors " +
+                  (open ? "bg-white/[0.08]" : "hover:bg-white/[0.05]")
                 }
               >
                 {/* header row: icon + title + time */}
                 <div className="flex items-start gap-2.5">
                   <AppIcon name={n.appName} icon={n.icon} />
                   <div className="min-w-0 flex-1">
-                    <div className="text-[12.5px] font-semibold leading-snug text-white">
+                    <div
+                      className={
+                        "text-[12.5px] font-semibold leading-snug text-white " +
+                        (open ? "" : "truncate")
+                      }
+                    >
                       {n.title || n.appName}
                     </div>
                     <div className="truncate text-[10.5px] leading-tight text-white/40">
@@ -107,9 +119,16 @@ export function NotificationList({
                   </button>
                 </div>
 
-                {/* body */}
+                {/* body: truncated when collapsed, full when open */}
                 {n.body && (
-                  <p className="mt-1.5 pl-[46px] text-[11.5px] leading-relaxed text-white/65 line-clamp-2">
+                  <p
+                    className={
+                      "mt-1.5 pl-[46px] text-[11.5px] leading-relaxed text-white/65 transition-all " +
+                      (open
+                        ? "whitespace-pre-wrap break-words"
+                        : "line-clamp-2")
+                    }
+                  >
                     {n.body}
                   </p>
                 )}

@@ -4,6 +4,11 @@ import type { Notification } from "../lib/types";
 
 function AppIcon({ name, icon }: { name: string; icon?: string }) {
   const initial = name.slice(0, 1);
+  const fallback = (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 text-[15px] font-semibold text-white ring-1 ring-white/10">
+      {initial}
+    </div>
+  );
   if (icon) {
     return (
       <img
@@ -11,14 +16,13 @@ function AppIcon({ name, icon }: { name: string; icon?: string }) {
         alt={name}
         className="h-10 w-10 shrink-0 rounded-xl object-cover ring-1 ring-white/10"
         draggable={false}
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+        }}
       />
     );
   }
-  return (
-    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 text-[15px] font-semibold text-white ring-1 ring-white/10">
-      {initial}
-    </div>
-  );
+  return fallback;
 }
 
 interface Props {

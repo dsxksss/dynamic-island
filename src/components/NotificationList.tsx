@@ -17,6 +17,12 @@ interface Props {
 
 function AppIcon({ name, icon }: { name: string; icon?: string }) {
   const initial = name.slice(0, 1);
+  // Fallback avatar (shown when no icon OR icon fails to load).
+  const fallback = (
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-[14px] font-semibold text-white ring-1 ring-white/10">
+      {initial}
+    </div>
+  );
   if (icon) {
     return (
       <img
@@ -24,15 +30,15 @@ function AppIcon({ name, icon }: { name: string; icon?: string }) {
         alt={name}
         className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-white/10"
         draggable={false}
+        // If the data URL is invalid/corrupt, swap to the fallback avatar.
+        onError={(e) => {
+          const img = e.currentTarget;
+          img.style.display = "none";
+        }}
       />
     );
   }
-  // gradient avatar fallback (looks more like a real app icon than flat grey)
-  return (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-[14px] font-semibold text-white ring-1 ring-white/10">
-      {initial}
-    </div>
-  );
+  return fallback;
 }
 
 function formatTime(ts: number): string {

@@ -144,9 +144,10 @@ fn parse_notification(n: &windows::UI::Notifications::UserNotification) -> Optio
         .unwrap_or_else(|| "应用".to_string());
 
     // Icon: use cache keyed by app name so we only do the slow stream read once.
+    // IMPORTANT: don't cache failures (empty string) — retry on subsequent polls.
     let icon = {
         let cache = ICON_CACHE.lock();
-        cache.get(&app_name).cloned()
+        cache.get(&app_name).cloned().filter(|s| !s.is_empty())
     };
     let icon = match icon {
         Some(cached) => cached,
@@ -155,7 +156,10 @@ fn parse_notification(n: &windows::UI::Notifications::UserNotification) -> Optio
                 .as_ref()
                 .and_then(|di| grab_icon_b64(di))
                 .unwrap_or_default();
-            ICON_CACHE.lock().insert(app_name.clone(), grabbed.clone());
+            // Only cache successful grabs; let failures retry next time.
+            if !grabbed.is_empty() {
+                ICON_CACHE.lock().insert(app_name.clone(), grabbed.clone());
+            }
             grabbed
         }
     };
@@ -205,7 +209,6 @@ fn grab_icon_b64(
     let stream = logo_ref.OpenReadAsync().ok()?.get().ok()?;
     let size = stream.Size().ok()? as u32;
     if size == 0 || size > 512 * 1024 {
-        // sanity guard against absurd sizes
         let _ = stream.Close();
         return None;
     }

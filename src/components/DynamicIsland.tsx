@@ -57,6 +57,7 @@ export function DynamicIsland() {
   const dismiss = useIslandStore((s) => s.dismiss);
   const clearAll = useIslandStore((s) => s.clearAll);
   const queue = useIslandStore((s) => s.queue);
+  const overPill = useIslandStore((s) => s.overPill);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -71,27 +72,27 @@ export function DynamicIsland() {
     }
   }, [queue.length, mode, setMode]);
 
-  // Click-through strategy. The OS window is large but mostly transparent; let
-  // clicks on dead area pass through, keep the actual pill clickable.
-  //   - card/expanded/compact: ALWAYS interactive (the pill is visible & meant
-  //     to be clicked). This is the fix for "can't click the island".
-  //   - idle: interactive only when the cursor is over the pill (`overPill`),
-  //     so the small peek doesn't block the desktop.
+  // Click-through strategy. The OS window is 480×400 but mostly transparent.
+  // Only the ACTUAL PILL should capture clicks; the transparent surround must
+  // pass clicks through to apps below.
+  //   - expanded (full list): the pill fills most of the window → always
+  //     interactive (it's big enough that overPill would be flaky at the edges).
+  //   - card/idle/compact (small pill): interactive ONLY when the cursor is
+  //     directly over the pill (`overPill`, tracked by the backend watcher).
+  //     Otherwise the transparent area would block the desktop.
   //   - hidden (notch): always click-through.
-  const interactive =
-    mode === "card" ||
-    mode === "expanded" ||
-    mode === "compact" ||
-    mode === "idle";
+  const interactive = mode === "expanded" || overPill;
   useEffect(() => {
     void setClickThrough(!interactive);
   }, [interactive]);
 
   // Sync the pill's on-screen rect to the backend (for hit-testing while
-  // click-through). The pill is centered, top at PILL_TOP.
+  // click-through). Add a small padding so hover is forgiving at the edges,
+  // especially when sliding in from the top.
   useEffect(() => {
-    const x = (WIN_W - g.width) / 2;
-    void setPillRect(x, PILL_TOP, g.width, g.height);
+    const pad = 6;
+    const x = (WIN_W - g.width) / 2 - pad;
+    void setPillRect(x, Math.max(0, PILL_TOP - pad), g.width + pad * 2, g.height + pad * 2);
   }, [g.width, g.height]);
 
   // Click: card -> expanded (open the full list); expanded -> card.

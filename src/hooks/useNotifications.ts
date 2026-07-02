@@ -12,7 +12,7 @@ import {
 import { playChime } from "../lib/sound";
 import { useIslandStore } from "../store/islandStore";
 
-const COMPACT_DURATION_MS = 5500;
+const COMPACT_DURATION_MS = 5000;
 const IDLE_HIDE_DELAY_MS = 4000;
 const INITIAL_VISIBLE_MS = 3500;
 const POLL_INTERVAL_MS = 2500;
@@ -54,17 +54,23 @@ export function useNotifications(): void {
   function scheduleAutoCollapse() {
     clearCompact();
     compactTimer.current = window.setTimeout(() => {
-      if (modeRef.current === "compact") {
-        setModeRef.current("idle");
-        scheduleAutoHide();
+      // Auto-hide after the countdown — goes straight to hidden (slide away).
+      // Only auto-collapses the medium card; the expanded list stays until the
+      // user leaves.
+      if (modeRef.current === "card" || modeRef.current === "compact") {
+        setModeRef.current("hidden");
       }
     }, COMPACT_DURATION_MS);
   }
   function scheduleAutoHide() {
     clearHide();
     hideTimer.current = window.setTimeout(() => {
-      if (modeRef.current === "idle") setModeRef.current("hidden");
-      else if (modeRef.current === "compact") scheduleAutoHide();
+      // Hide whatever's showing (card/idle/compact). The expanded list also
+      // hides after the delay if the cursor is genuinely gone.
+      const m = modeRef.current;
+      if (m === "idle" || m === "card" || m === "compact" || m === "expanded") {
+        setModeRef.current("hidden");
+      }
     }, IDLE_HIDE_DELAY_MS);
   }
 
@@ -82,9 +88,9 @@ export function useNotifications(): void {
     clearHide();
     if (modeRef.current === "hidden") {
       setMode("idle");
-      window.setTimeout(() => setMode("compact"), 60);
+      window.setTimeout(() => setMode("card"), 60);
     } else {
-      setMode("compact");
+      setMode("card");
     }
     scheduleAutoCollapse();
   }
@@ -99,6 +105,15 @@ export function useNotifications(): void {
       cancelled = true;
     };
   }, [setStatus]);
+
+  // --- re-schedule auto-collapse when re-entering compact (e.g. after the
+  //     user leaves an expanded view) so the progress bar restarts ----------
+  useEffect(() => {
+    if (mode === "card" || mode === "compact") {
+      scheduleAutoCollapse();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // --- initial auto-hide ----------------------------------------------------
   useEffect(() => {
@@ -120,14 +135,13 @@ export function useNotifications(): void {
             for (const n of list) enqueue(n);
             playChime();
             clearHide();
-            // If currently hidden (notch), step through idle first so the morph
-            // is a smooth height growth (8→38→60), not a jump (8→60) that causes
-            // the spring to overshoot/wobble.
+            // Go straight to expanded (no compact intermediate). If hidden, step
+            // through idle briefly so the morph is a smooth height growth.
             if (modeRef.current === "hidden") {
               setMode("idle");
-              window.setTimeout(() => setMode("compact"), 60);
+              window.setTimeout(() => setMode("card"), 60);
             } else {
-              setMode("compact");
+              setMode("card");
             }
             scheduleAutoCollapse();
           }
@@ -157,12 +171,14 @@ export function useNotifications(): void {
     onTopHover(({ hovering, overPill }) => {
       setOverPill(overPill);
       if (hovering) {
+        // Cursor in the top summon zone — reveal (if hidden) and stay.
         clearHide();
         if (modeRef.current === "hidden") setMode("idle");
       } else if (!overPill) {
-        if (modeRef.current === "idle" || modeRef.current === "hidden") {
-          scheduleAutoHide();
-        }
+        // Cursor left both the top edge AND the pill — start the hide countdown.
+        // The expanded list stays until the countdown fires (gives the user a
+        // moment to re-enter); card/idle hide promptly.
+        scheduleAutoHide();
       }
     }).then((u) => unlisteners.push(u));
     return () => unlisteners.forEach((u) => u());

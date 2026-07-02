@@ -1,7 +1,7 @@
 {
   "name": "dynamic-island",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "桌面灵动岛 - Hook Windows 通知，流畅动画",
   "scripts": {

@@ -26,5 +26,7 @@ export interface PlatformInfo {
 
 /** The island's high-level display mode.
  *  `hidden` = auto-hidden off the top of the screen, summoned by hovering the
- *  screen's top edge. The OS window is fixed-size; only the pill morphs. */
-export type IslandMode = "hidden" | "idle" | "compact" | "expanded";
+ *  screen's top edge. The OS window is fixed-size; only the pill morphs.
+ *  `card` = medium single-notification card (when a new notification arrives).
+ *  `expanded` = large list card showing all notifications (click card to open). */
+export type IslandMode = "hidden" | "idle" | "compact" | "card" | "expanded";

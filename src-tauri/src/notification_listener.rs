@@ -7,6 +7,7 @@
 //!   3. parse toasts via Notification().Visual().GetBinding("ToastGeneric")
 //!   4. dedupe by id (AtomicU32 of max seen id)
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::notifications::{Notification, NotificationKind};
@@ -15,6 +16,10 @@ use crate::notifications::{Notification, NotificationKind};
 static MAX_ID: AtomicU32 = AtomicU32::new(0);
 /// Whether we've done our first scan (so we skip the initial backlog).
 static INITIALIZED: AtomicU32 = AtomicU32::new(0);
+
+/// Cache app icons by app-name so we only grab the (slow) stream once per app.
+static ICON_CACHE: once_cell::sync::Lazy<parking_lot::Mutex<HashMap<String, String>>> =
+    once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(HashMap::new()));
 
 #[cfg(windows)]
 pub fn poll() -> Vec<Notification> {
@@ -93,32 +98,41 @@ pub fn poll() -> Vec<Notification> {
 
 #[cfg(windows)]
 fn parse_notification(n: &windows::UI::Notifications::UserNotification) -> Option<Notification> {
-    // Parse via the toast Visual → ToastGeneric binding → text elements, the
-    // same path the reference project uses.
     let notif = n.Notification().ok()?;
     let visual = notif.Visual().ok()?;
-    let binding = visual.GetBinding(&windows::core::HSTRING::from("ToastGeneric")).ok()?;
 
+    // Collect text from ALL bindings, not just "ToastGeneric". Many toasts use
+    // legacy templates (ToastText01/02 etc.) where the entire body is in text[0].
+    // We try ToastGeneric first (modern, has title+body split), then fall back
+    // to enumerating every binding.
     let mut texts: Vec<String> = Vec::new();
-    if let Ok(te) = binding.GetTextElements() {
-        let cnt = te.Size().unwrap_or(0);
-        for i in 0..cnt {
-            if let Ok(el) = te.GetAt(i) {
-                if let Ok(t) = el.Text() {
-                    let t = t.to_string();
-                    if !t.is_empty() {
-                        texts.push(t);
+
+    // 1. Try ToastGeneric first (the common modern path).
+    if let Ok(binding) = visual.GetBinding(&windows::core::HSTRING::from("ToastGeneric")) {
+        collect_binding_texts(&binding, &mut texts);
+    }
+
+    // 2. Fallback: if ToastGeneric had no text, enumerate all bindings.
+    if texts.is_empty() {
+        if let Ok(bindings) = visual.Bindings() {
+            let cnt = bindings.Size().unwrap_or(0);
+            for i in 0..cnt {
+                if let Ok(b) = bindings.GetAt(i) {
+                    collect_binding_texts(&b, &mut texts);
+                    if !texts.is_empty() {
+                        break;
                     }
                 }
             }
         }
     }
 
-    let title = texts.first().cloned().unwrap_or_default();
-    let body = if texts.len() > 1 {
-        texts[1..].join(" ")
+    // Split into title/body. If only one text element, it's the whole message —
+    // put it in body (and use app name as title) so the detail view shows it.
+    let (title, body) = if texts.len() <= 1 {
+        (String::new(), texts.into_iter().next().unwrap_or_default())
     } else {
-        String::new()
+        (texts[0].clone(), texts[1..].join("\n"))
     };
 
     let app_info = n.AppInfo().ok();
@@ -128,10 +142,23 @@ fn parse_notification(n: &windows::UI::Notifications::UserNotification) -> Optio
         .and_then(|di| di.DisplayName().ok())
         .map(|h| h.to_string())
         .unwrap_or_else(|| "应用".to_string());
-    let icon = display_info
-        .as_ref()
-        .and_then(|di| grab_icon_b64(di))
-        .unwrap_or_default();
+
+    // Icon: use cache keyed by app name so we only do the slow stream read once.
+    let icon = {
+        let cache = ICON_CACHE.lock();
+        cache.get(&app_name).cloned()
+    };
+    let icon = match icon {
+        Some(cached) => cached,
+        None => {
+            let grabbed = display_info
+                .as_ref()
+                .and_then(|di| grab_icon_b64(di))
+                .unwrap_or_default();
+            ICON_CACHE.lock().insert(app_name.clone(), grabbed.clone());
+            grabbed
+        }
+    };
 
     Some(Notification {
         id: n.Id().ok()?.to_string(),
@@ -144,8 +171,28 @@ fn parse_notification(n: &windows::UI::Notifications::UserNotification) -> Optio
     })
 }
 
+#[cfg(windows)]
+fn collect_binding_texts(
+    binding: &windows::UI::Notifications::NotificationBinding,
+    out: &mut Vec<String>,
+) {
+    if let Ok(te) = binding.GetTextElements() {
+        let cnt = te.Size().unwrap_or(0);
+        for i in 0..cnt {
+            if let Ok(el) = te.GetAt(i) {
+                if let Ok(t) = el.Text() {
+                    let t = t.to_string();
+                    if !t.is_empty() {
+                        out.push(t);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Grab the app's logo from its DisplayInfo, read the stream into bytes, and
-/// return as a `data:image/png;base64,...` URL. Returns None if unavailable.
+/// return as a `data:image/<type>;base64,...` URL. Returns None if unavailable.
 #[cfg(windows)]
 fn grab_icon_b64(
     di: &windows::ApplicationModel::AppDisplayInfo,
@@ -153,25 +200,50 @@ fn grab_icon_b64(
     use windows::Foundation::Size;
     use windows::Storage::Streams::DataReader;
 
-    // Request a 44x44 logo (logical px); the system scales the best asset.
-    let logo_ref = di.GetLogo(Size { Width: 44.0, Height: 44.0 }).ok()?;
+    // Request a 48x48 logo; the system picks the best matching asset.
+    let logo_ref = di.GetLogo(Size { Width: 48.0, Height: 48.0 }).ok()?;
     let stream = logo_ref.OpenReadAsync().ok()?.get().ok()?;
     let size = stream.Size().ok()? as u32;
-    if size == 0 {
+    if size == 0 || size > 512 * 1024 {
+        // sanity guard against absurd sizes
+        let _ = stream.Close();
         return None;
     }
     let reader = DataReader::CreateDataReader(&stream).ok()?;
     let loaded = reader.LoadAsync(size).ok()?.get().ok().unwrap_or(0);
     if loaded == 0 {
+        let _ = reader.Close();
+        let _ = stream.Close();
         return None;
     }
     let mut buf = vec![0u8; loaded as usize];
-    reader.ReadBytes(&mut buf).ok()?;
+    if reader.ReadBytes(&mut buf).is_err() {
+        let _ = reader.Close();
+        let _ = stream.Close();
+        return None;
+    }
     let _ = reader.Close();
     let _ = stream.Close();
 
+    // Detect the image type from magic bytes (logos may be PNG, JPEG, or GIF).
+    let mime = sniff_mime(&buf);
     let b64 = base64_encode(&buf);
-    Some(format!("data:image/png;base64,{b64}"))
+    Some(format!("data:{mime};base64,{b64}"))
+}
+
+/// Sniff the image MIME type from magic bytes.
+#[cfg(windows)]
+fn sniff_mime(buf: &[u8]) -> &'static str {
+    if buf.len() >= 8 && buf[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
+        "image/png"
+    } else if buf.len() >= 3 && &buf[..3] == [0xFF, 0xD8, 0xFF] {
+        "image/jpeg"
+    } else if buf.len() >= 6 && (&buf[..6] == b"GIF87a" || &buf[..6] == b"GIF89a") {
+        "image/gif"
+    } else {
+        // default to png (most WinRT logos are png)
+        "image/png"
+    }
 }
 
 /// Minimal base64 encoder (no external dep).

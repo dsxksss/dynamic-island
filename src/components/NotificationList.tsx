@@ -10,9 +10,6 @@ import type { Notification } from "../lib/types";
 
 interface Props {
   items: Notification[];
-  /** Which notification is opened full (by clicking). Null = all collapsed. */
-  detailId: string | null;
-  onToggleDetail: (id: string | null) => void;
   onDismiss: (id: string) => void;
   onClearAll: () => void;
 }
@@ -55,8 +52,6 @@ function formatTime(ts: number): string {
 
 export function NotificationList({
   items,
-  detailId,
-  onToggleDetail,
   onDismiss,
   onClearAll,
 }: Props) {
@@ -66,7 +61,6 @@ export function NotificationList({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <AnimatePresence initial={false}>
           {items.map((n) => {
-            const expanded = detailId === n.id;
             return (
               <motion.div
                 key={n.id}
@@ -77,18 +71,16 @@ export function NotificationList({
                 transition={{ duration: 0.2 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onToggleDetail(expanded ? null : n.id);
                 }}
                 className={
-                  "group mb-2 cursor-pointer rounded-2xl px-3 py-2.5 transition-colors " +
-                  (expanded ? "bg-white/[0.08]" : "hover:bg-white/[0.05]")
+                  "group mb-2 rounded-2xl px-3 py-2.5 transition-colors hover:bg-white/[0.05]"
                 }
               >
                 {/* header row: icon + title + time */}
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-start gap-2.5">
                   <AppIcon name={n.appName} icon={n.icon} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12.5px] font-semibold leading-tight text-white">
+                    <div className="text-[12.5px] font-semibold leading-snug text-white">
                       {n.title || n.appName}
                     </div>
                     <div className="truncate text-[10.5px] leading-tight text-white/40">
@@ -117,12 +109,7 @@ export function NotificationList({
 
                 {/* body */}
                 {n.body && (
-                  <p
-                    className={
-                      "mt-1.5 pl-[46px] text-[11.5px] leading-relaxed text-white/65 transition-all " +
-                      (expanded ? "" : "line-clamp-1")
-                    }
-                  >
+                  <p className="mt-1.5 pl-[46px] text-[11.5px] leading-relaxed text-white/65 line-clamp-2">
                     {n.body}
                   </p>
                 )}

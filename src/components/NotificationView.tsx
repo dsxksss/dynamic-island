@@ -1,6 +1,4 @@
-// Notification content shown in compact and expanded modes.
-
-import { motion } from "motion/react";
+// A single notification shown as a medium card (expanded mode).
 
 import type { Notification } from "../lib/types";
 
@@ -11,13 +9,13 @@ function AppIcon({ name, icon }: { name: string; icon?: string }) {
       <img
         src={icon}
         alt={name}
-        className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-white/10"
+        className="h-10 w-10 shrink-0 rounded-xl object-cover ring-1 ring-white/10"
         draggable={false}
       />
     );
   }
   return (
-    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-[12px] font-semibold text-white ring-1 ring-white/10">
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-600 to-slate-800 text-[15px] font-semibold text-white ring-1 ring-white/10">
       {initial}
     </div>
   );
@@ -26,56 +24,47 @@ function AppIcon({ name, icon }: { name: string; icon?: string }) {
 interface Props {
   n: Notification;
   expanded: boolean;
+  /** Auto-close countdown duration in ms (unused now, kept for compat). */
+  autoCloseMs?: number;
   onDismiss: () => void;
 }
 
-export function NotificationView({ n, expanded, onDismiss }: Props) {
+export function NotificationView({ n, onDismiss }: Props) {
   return (
-    <div className="flex h-full w-full items-center gap-3 px-4 py-2">
+    <div className="flex h-full w-full items-start gap-3 px-4 py-3">
       <AppIcon name={n.appName} icon={n.icon} />
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[11px] font-medium uppercase tracking-wide text-white/50">
-            {n.appName}
-          </span>
+        <div className="mb-0.5 truncate text-[10px] font-medium uppercase tracking-wide text-white/40">
+          {n.appName}
         </div>
-        <div
-          className={
-            "truncate text-[13px] font-medium text-white " +
-            (expanded ? "" : "leading-tight")
-          }
-        >
-          {n.title}
+        <div className="text-[13px] font-semibold leading-snug text-white">
+          {n.title || n.appName}
         </div>
-        {expanded ? (
-          <motion.p
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="mt-1 text-[12px] leading-snug text-white/70"
-          >
+        {n.body && (
+          <p className="mt-1 line-clamp-3 break-words text-[11.5px] leading-relaxed text-white/60">
             {n.body}
-          </motion.p>
-        ) : (
-          <div className="truncate text-[12px] text-white/60">{n.body}</div>
+          </p>
         )}
       </div>
 
-      {expanded && (
-        <motion.button
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.8 }}
-          onClick={(e) => {
-            e.stopPropagation();
-            onDismiss();
-          }}
-          className="shrink-0 rounded-full bg-white/10 px-3 py-1 text-[11px] font-medium text-white/80 transition-colors hover:bg-white/20"
-        >
-          关闭
-        </motion.button>
-      )}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDismiss();
+        }}
+        className="shrink-0 rounded-full p-1 text-white/30 transition-colors hover:bg-white/10 hover:text-white/70"
+        aria-label="关闭"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path
+            d="M3 3L11 11M11 3L3 11"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
     </div>
   );
 }

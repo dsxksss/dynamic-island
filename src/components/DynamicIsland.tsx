@@ -11,7 +11,7 @@
 //    sliver into the full pill (idle), which then behaves normally.
 //  - Clicking the pill toggles compact<->expanded (notification details).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { setClickThrough, setPillRect } from "../lib/tauri";
@@ -27,9 +27,9 @@ const SLIDE_SPRING = { type: "spring", stiffness: 300, damping: 28 } as const;
 const WIN_W = 480;
 const WIN_H = 400;
 
-/** Pill geometry per mode. `expanded` height grows when a list item is opened
- *  full, so its complete content is always visible. */
-function pillGeometry(mode: IslandMode, detailOpen: boolean) {
+/** Pill geometry per mode.
+ *  `card` = medium single-notification card. `expanded` = large list card. */
+function pillGeometry(mode: IslandMode) {
   switch (mode) {
     case "hidden":
       return { width: 150, height: 8, radius: 999 };
@@ -37,10 +37,12 @@ function pillGeometry(mode: IslandMode, detailOpen: boolean) {
       return { width: 150, height: 38, radius: 999 };
     case "compact":
       return { width: 360, height: 60, radius: 30 };
+    case "card":
+      // medium card: one notification, icon + title + body
+      return { width: 380, height: 130, radius: 28 };
     case "expanded":
-      // When a notification is opened (full body shown), grow the pill so the
-      // whole item fits without scrolling.
-      return { width: 432, height: detailOpen ? 360 : 220, radius: 34 };
+      // large list card: all notifications, scrollable
+      return { width: 432, height: 320, radius: 34 };
   }
 }
 
@@ -55,25 +57,32 @@ export function DynamicIsland() {
   const dismiss = useIslandStore((s) => s.dismiss);
   const clearAll = useIslandStore((s) => s.clearAll);
   const queue = useIslandStore((s) => s.queue);
-  const overPill = useIslandStore((s) => s.overPill);
-  const n = queue[0];
-
-  // Which notification is opened full (by clicking). Null = all collapsed.
-  const [detailId, setDetailId] = useState<string | null>(null);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
-  const g = pillGeometry(mode, detailId !== null);
+  const g = pillGeometry(mode);
 
-  // Click-through strategy. The OS window is 480×260 but mostly transparent;
-  // let clicks on the dead transparent area pass through, while keeping the
-  // actual pill clickable.
-  //   - compact/expanded: always interactive.
-  //   - idle: interactive ONLY when the cursor is over the pill (`overPill`).
+  // When the queue becomes empty (e.g. after dismissing the last notification),
+  // collapse back to the hidden notch.
+  useEffect(() => {
+    if (queue.length === 0 && (mode === "expanded" || mode === "card" || mode === "compact")) {
+      setMode("hidden");
+    }
+  }, [queue.length, mode, setMode]);
+
+  // Click-through strategy. The OS window is large but mostly transparent; let
+  // clicks on dead area pass through, keep the actual pill clickable.
+  //   - card/expanded/compact: ALWAYS interactive (the pill is visible & meant
+  //     to be clicked). This is the fix for "can't click the island".
+  //   - idle: interactive only when the cursor is over the pill (`overPill`),
+  //     so the small peek doesn't block the desktop.
   //   - hidden (notch): always click-through.
   const interactive =
-    mode === "compact" || mode === "expanded" || (mode === "idle" && overPill);
+    mode === "card" ||
+    mode === "expanded" ||
+    mode === "compact" ||
+    mode === "idle";
   useEffect(() => {
     void setClickThrough(!interactive);
   }, [interactive]);
@@ -85,28 +94,17 @@ export function DynamicIsland() {
     void setPillRect(x, PILL_TOP, g.width, g.height);
   }, [g.width, g.height]);
 
-  // Click: compact/idle -> expanded (show the list); expanded -> compact.
-  // No-op when there's nothing to expand into.
+  // Click: card -> expanded (open the full list); expanded -> card.
   function handleClick() {
-    if (modeRef.current === "expanded") setMode("compact");
-    else if (
-      queue.length > 0 &&
-      (modeRef.current === "compact" || modeRef.current === "idle")
-    )
-      setMode("expanded");
+    if (modeRef.current === "expanded") setMode("card");
+    else if (modeRef.current === "card" && queue.length > 0) setMode("expanded");
+    else if (modeRef.current === "idle" && queue.length > 0) setMode("card");
   }
-  // Hovering the revealed pill expands it to the notification list — but ONLY
-  // when there are notifications to show. With an empty queue, hovering keeps
-  // the small idle pill (no awkward empty box).
+  // DOM hover handlers are intentionally minimal — the backend cursor watcher
+  // (onTopHover) is the single authority for show/hide to avoid feedback loops.
+  // We only use mouseenter to eagerly open the card when hovering the idle pill.
   function handleEnter() {
-    if (queue.length > 0 && (modeRef.current === "idle" || modeRef.current === "compact"))
-      setMode("expanded");
-  }
-  function handleLeave() {
-    // Leaving the pill collapses gracefully: expanded -> compact (a smooth
-    // shrink), NOT expanded -> hidden (which would be a 230px→8px jump and
-    // cause wild spring oscillation). The auto-hide timer handles the rest.
-    if (modeRef.current === "expanded") setMode("compact");
+    if (queue.length > 0 && modeRef.current === "idle") setMode("card");
   }
 
   return (
@@ -124,12 +122,17 @@ export function DynamicIsland() {
           style={{ width: WIN_W }}
           className="absolute top-0 flex justify-center"
         >
-          {/* The pill. Morphs width/height/borderRadius only. */}
+          {/* The pill. Morphs width/height/borderRadius + fades out when hidden. */}
           <motion.div
             onClick={handleClick}
             onMouseEnter={handleEnter}
-            onMouseLeave={handleLeave}
-            animate={{ width: g.width, height: g.height, borderRadius: g.radius }}
+            animate={{
+              width: g.width,
+              height: g.height,
+              borderRadius: g.radius,
+              opacity: mode === "hidden" ? 0 : 1,
+              y: mode === "hidden" ? -20 : 0,
+            }}
             transition={MORPH_SPRING}
             style={{
               backgroundColor: "rgba(8, 8, 10, 0.96)",
@@ -142,7 +145,6 @@ export function DynamicIsland() {
           >
             <AnimatePresence mode="popLayout" initial={false}>
               {mode === "hidden" ? (
-                // notch sliver: no content, just the dark bar
                 <motion.div key="notch" className="h-full w-full" />
               ) : mode === "expanded" ? (
                 <motion.div
@@ -155,22 +157,24 @@ export function DynamicIsland() {
                 >
                   <NotificationList
                     items={queue}
-                    detailId={detailId}
-                    onToggleDetail={setDetailId}
                     onDismiss={dismiss}
                     onClearAll={clearAll}
                   />
                 </motion.div>
-              ) : n ? (
+              ) : mode === "card" && queue[0] ? (
                 <motion.div
-                  key="notif"
+                  key={`card-${queue[0].id}`}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.15 }}
                   className="h-full w-full"
                 >
-                  <NotificationView n={n} expanded={false} onDismiss={() => dismiss(n.id)} />
+                  <NotificationView
+                    n={queue[0]}
+                    expanded
+                    onDismiss={() => dismiss(queue[0].id)}
+                  />
                 </motion.div>
               ) : (
                 <motion.div
@@ -185,6 +189,25 @@ export function DynamicIsland() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* Auto-close progress bar at the bottom. Visible on the medium
+                card, shrinks to zero over 5s, then the island hides. */}
+            {mode === "card" && (
+              <motion.div
+                key="progress"
+                className="absolute bottom-0 left-3 right-3 h-[2px] overflow-hidden rounded-full bg-white/10"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.1 }}
+              >
+                <motion.div
+                  className="h-full rounded-full bg-white/30"
+                  initial={{ width: "100%" }}
+                  animate={{ width: "0%" }}
+                  transition={{ duration: 5, ease: "linear" }}
+                />
+              </motion.div>
+            )}
           </motion.div>
         </motion.div>
       </div>

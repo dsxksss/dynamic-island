@@ -57,7 +57,7 @@ export const useIslandStore = create<IslandState>((set, get) => ({
   },
   dismiss: (id) =>
     set((s) => ({ queue: s.queue.filter((x) => x.id !== id) })),
-  clearAll: () => set({ queue: [] }),
+  clearAll: () => set({ queue: [], mode: "hidden" }),
 
   setMode: (m) => set({ mode: m }),
   setOverPill: (v) => set({ overPill: v }),

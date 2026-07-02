@@ -5,6 +5,8 @@ export type NotificationKind = "generic" | "music" | "timer";
 export interface Notification {
   id: string;
   appName: string;
+  /** App icon as a data URL (base64 PNG), empty if unavailable. */
+  icon: string;
   title: string;
   body: string;
   timestamp: number;

@@ -121,22 +121,89 @@ fn parse_notification(n: &windows::UI::Notifications::UserNotification) -> Optio
         String::new()
     };
 
-    let app_name = n
-        .AppInfo()
-        .ok()
-        .and_then(|ai| ai.DisplayInfo().ok())
+    let app_info = n.AppInfo().ok();
+    let display_info = app_info.as_ref().and_then(|ai| ai.DisplayInfo().ok());
+    let app_name = display_info
+        .as_ref()
         .and_then(|di| di.DisplayName().ok())
         .map(|h| h.to_string())
         .unwrap_or_else(|| "应用".to_string());
+    let icon = display_info
+        .as_ref()
+        .and_then(|di| grab_icon_b64(di))
+        .unwrap_or_default();
 
     Some(Notification {
         id: n.Id().ok()?.to_string(),
         app_name,
+        icon,
         title,
         body,
         timestamp: creation_time_ms(n),
         kind: NotificationKind::Generic,
     })
+}
+
+/// Grab the app's logo from its DisplayInfo, read the stream into bytes, and
+/// return as a `data:image/png;base64,...` URL. Returns None if unavailable.
+#[cfg(windows)]
+fn grab_icon_b64(
+    di: &windows::ApplicationModel::AppDisplayInfo,
+) -> Option<String> {
+    use windows::Foundation::Size;
+    use windows::Storage::Streams::DataReader;
+
+    // Request a 44x44 logo (logical px); the system scales the best asset.
+    let logo_ref = di.GetLogo(Size { Width: 44.0, Height: 44.0 }).ok()?;
+    let stream = logo_ref.OpenReadAsync().ok()?.get().ok()?;
+    let size = stream.Size().ok()? as u32;
+    if size == 0 {
+        return None;
+    }
+    let reader = DataReader::CreateDataReader(&stream).ok()?;
+    let loaded = reader.LoadAsync(size).ok()?.get().ok().unwrap_or(0);
+    if loaded == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; loaded as usize];
+    reader.ReadBytes(&mut buf).ok()?;
+    let _ = reader.Close();
+    let _ = stream.Close();
+
+    let b64 = base64_encode(&buf);
+    Some(format!("data:image/png;base64,{b64}"))
+}
+
+/// Minimal base64 encoder (no external dep).
+#[cfg(windows)]
+fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut i = 0;
+    while i + 2 < input.len() {
+        let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | input[i + 2] as u32;
+        out.push(TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        out.push(TABLE[((n >> 6) & 63) as usize] as char);
+        out.push(TABLE[(n & 63) as usize] as char);
+        i += 3;
+    }
+    let rem = input.len() - i;
+    if rem == 1 {
+        let n = (input[i] as u32) << 16;
+        out.push(TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rem == 2 {
+        let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8);
+        out.push(TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        out.push(TABLE[((n >> 6) & 63) as usize] as char);
+        out.push('=');
+    }
+    out
 }
 
 #[cfg(windows)]

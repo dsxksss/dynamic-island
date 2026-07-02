@@ -11,6 +11,8 @@ pub struct Notification {
     pub id: String,
     /// Display name of the source app, e.g. "微信", "Outlook".
     pub app_name: String,
+    /// App icon as a data URL (base64 PNG), if available. Empty string if not.
+    pub icon: String,
     /// Optional first line / title.
     pub title: String,
     /// Optional body / second line.

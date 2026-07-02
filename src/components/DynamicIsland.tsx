@@ -54,6 +54,8 @@ export function DynamicIsland() {
   const dismiss = useIslandStore((s) => s.dismiss);
   const clearAll = useIslandStore((s) => s.clearAll);
   const queue = useIslandStore((s) => s.queue);
+  const filterText = useIslandStore((s) => s.filterText);
+  const setFilterText = useIslandStore((s) => s.setFilterText);
   const overPill = useIslandStore((s) => s.overPill);
   const n = queue[0];
 
@@ -151,6 +153,8 @@ export function DynamicIsland() {
                 >
                   <NotificationList
                     items={queue}
+                    filterText={filterText}
+                    onFilterChange={setFilterText}
                     onDismiss={dismiss}
                     onClearAll={clearAll}
                   />

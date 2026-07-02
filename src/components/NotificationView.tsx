@@ -4,8 +4,18 @@ import { motion } from "motion/react";
 
 import type { Notification } from "../lib/types";
 
-function AppIcon({ name }: { name: string }) {
+function AppIcon({ name, icon }: { name: string; icon?: string }) {
   const initial = name.slice(0, 1);
+  if (icon) {
+    return (
+      <img
+        src={icon}
+        alt={name}
+        className="h-7 w-7 shrink-0 rounded-lg object-cover"
+        draggable={false}
+      />
+    );
+  }
   return (
     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/15 text-[13px] font-semibold text-white">
       {initial}
@@ -22,7 +32,7 @@ interface Props {
 export function NotificationView({ n, expanded, onDismiss }: Props) {
   return (
     <div className="flex h-full w-full items-center gap-3 px-4 py-2">
-      <AppIcon name={n.appName} />
+      <AppIcon name={n.appName} icon={n.icon} />
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">

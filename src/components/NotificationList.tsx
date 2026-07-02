@@ -7,12 +7,24 @@ import type { Notification } from "../lib/types";
 interface Props {
   items: Notification[];
   activeId?: string;
+  filterText: string;
+  onFilterChange: (t: string) => void;
   onDismiss: (id: string) => void;
   onClearAll: () => void;
 }
 
-function AppIcon({ name }: { name: string }) {
+function AppIcon({ name, icon }: { name: string; icon?: string }) {
   const initial = name.slice(0, 1);
+  if (icon) {
+    return (
+      <img
+        src={icon}
+        alt={name}
+        className="h-8 w-8 shrink-0 rounded-lg object-cover"
+        draggable={false}
+      />
+    );
+  }
   return (
     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-[13px] font-semibold text-white">
       {initial}
@@ -32,13 +44,46 @@ function formatTime(ts: number): string {
   return `${mo}/${da} ${h}:${m}`;
 }
 
-export function NotificationList({ items, onDismiss, onClearAll }: Props) {
+export function NotificationList({
+  items,
+  filterText,
+  onFilterChange,
+  onDismiss,
+  onClearAll,
+}: Props) {
+  // Filter by app name / title / body (case-insensitive).
+  const q = filterText.trim().toLowerCase();
+  const filtered = q
+    ? items.filter(
+        (n) =>
+          n.appName.toLowerCase().includes(q) ||
+          n.title.toLowerCase().includes(q) ||
+          n.body.toLowerCase().includes(q),
+      )
+    : items;
+
   return (
     <div className="flex h-full w-full flex-col px-3 py-3">
+      {/* filter input */}
+      <div className="mb-2 shrink-0 px-1">
+        <input
+          type="text"
+          value={filterText}
+          onChange={(e) => {
+            e.stopPropagation();
+            onFilterChange(e.target.value);
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          placeholder="过滤通知（应用名/关键词）..."
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/80 outline-none transition-colors placeholder:text-white/30 focus:border-white/20 focus:bg-white/10"
+        />
+      </div>
+
       {/* scrollable list */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <AnimatePresence initial={false}>
-          {items.map((n) => (
+          {filtered.map((n) => (
             <motion.div
               key={n.id}
               layout
@@ -49,7 +94,7 @@ export function NotificationList({ items, onDismiss, onClearAll }: Props) {
               onClick={(e) => e.stopPropagation()}
               className="group mb-1 flex items-start gap-2.5 rounded-xl px-2 py-2 hover:bg-white/[0.06]"
             >
-              <AppIcon name={n.appName} />
+              <AppIcon name={n.appName} icon={n.icon} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-[12px] font-medium text-white/90">

@@ -9,6 +9,7 @@ import {
   onTopHover,
   pollNotifications,
 } from "../lib/tauri";
+import { playChime } from "../lib/sound";
 import { useIslandStore } from "../store/islandStore";
 
 const COMPACT_DURATION_MS = 5500;
@@ -71,11 +72,13 @@ export function useNotifications(): void {
     enqueue({
       id: `n-${Date.now()}-${demoSeq++}`,
       appName: app,
+      icon: "",
       title,
       body,
       timestamp: Date.now(),
       kind: "generic" as const,
     });
+    playChime();
     clearHide();
     setMode("compact");
     scheduleAutoCollapse();
@@ -110,6 +113,7 @@ export function useNotifications(): void {
         pollNotifications().then((list) => {
           if (list.length > 0) {
             for (const n of list) enqueue(n);
+            playChime();
             clearHide();
             setMode("compact");
             scheduleAutoCollapse();

@@ -11,6 +11,8 @@ interface IslandState {
   /** Whether the cursor is directly over the pill (from backend watcher). Used
    *  to selectively disable click-through so the pill is clickable in idle. */
   overPill: boolean;
+  /** Filter text for the notification list (matches app name / title / body). */
+  filterText: string;
   /** Backend listener status (null until the first event arrives). */
   status: ListenerStatus | null;
   /** Whether real capture is unavailable (drives demo-mode fallback). */
@@ -23,6 +25,7 @@ interface IslandState {
   clearAll: () => void;
   setMode: (m: IslandMode) => void;
   setOverPill: (v: boolean) => void;
+  setFilterText: (t: string) => void;
   setStatus: (s: ListenerStatus) => void;
   setDemo: (d: boolean) => void;
 }
@@ -33,6 +36,7 @@ export const useIslandStore = create<IslandState>((set, get) => ({
   queue: [],
   mode: "idle",
   overPill: false,
+  filterText: "",
   status: null,
   demo: false,
 
@@ -57,6 +61,7 @@ export const useIslandStore = create<IslandState>((set, get) => ({
 
   setMode: (m) => set({ mode: m }),
   setOverPill: (v) => set({ overPill: v }),
+  setFilterText: (t) => set({ filterText: t }),
   setStatus: (s) => set({ status: s, demo: s.available === false }),
   setDemo: (d) => set({ demo: d }),
 }));

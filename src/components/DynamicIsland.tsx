@@ -11,7 +11,7 @@
 //    sliver into the full pill (idle), which then behaves normally.
 //  - Clicking the pill toggles compact<->expanded (notification details).
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import { setClickThrough, setPillRect } from "../lib/tauri";
@@ -25,21 +25,22 @@ const MORPH_SPRING = { type: "spring", stiffness: 380, damping: 30 } as const;
 const SLIDE_SPRING = { type: "spring", stiffness: 300, damping: 28 } as const;
 
 const WIN_W = 480;
-const WIN_H = 260;
+const WIN_H = 400;
 
-/** Pill geometry per mode. The morph animates between these. `hidden` is a thin
- *  full-width bar (the notch) that takes almost no vertical space. */
-function pillGeometry(mode: IslandMode) {
+/** Pill geometry per mode. `expanded` height grows when a list item is opened
+ *  full, so its complete content is always visible. */
+function pillGeometry(mode: IslandMode, detailOpen: boolean) {
   switch (mode) {
     case "hidden":
-      // thin sliver: wide, ~8px tall, gently rounded — the "notch".
-      return { width: 220, height: 8, radius: 6 };
+      return { width: 150, height: 8, radius: 999 };
     case "idle":
       return { width: 150, height: 38, radius: 999 };
     case "compact":
       return { width: 360, height: 60, radius: 30 };
     case "expanded":
-      return { width: 432, height: 230, radius: 34 };
+      // When a notification is opened (full body shown), grow the pill so the
+      // whole item fits without scrolling.
+      return { width: 432, height: detailOpen ? 360 : 220, radius: 34 };
   }
 }
 
@@ -54,15 +55,16 @@ export function DynamicIsland() {
   const dismiss = useIslandStore((s) => s.dismiss);
   const clearAll = useIslandStore((s) => s.clearAll);
   const queue = useIslandStore((s) => s.queue);
-  const filterText = useIslandStore((s) => s.filterText);
-  const setFilterText = useIslandStore((s) => s.setFilterText);
   const overPill = useIslandStore((s) => s.overPill);
   const n = queue[0];
+
+  // Which notification is opened full (by clicking). Null = all collapsed.
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
-  const g = pillGeometry(mode);
+  const g = pillGeometry(mode, detailId !== null);
 
   // Click-through strategy. The OS window is 480×260 but mostly transparent;
   // let clicks on the dead transparent area pass through, while keeping the
@@ -101,10 +103,10 @@ export function DynamicIsland() {
       setMode("expanded");
   }
   function handleLeave() {
-    // Leaving the pill collapses straight away — no intermediate "shrink to
-    // small pill then hide" step.
-    if (modeRef.current === "expanded") setMode("hidden");
-    else if (modeRef.current === "compact") setMode("hidden");
+    // Leaving the pill collapses gracefully: expanded -> compact (a smooth
+    // shrink), NOT expanded -> hidden (which would be a 230px→8px jump and
+    // cause wild spring oscillation). The auto-hide timer handles the rest.
+    if (modeRef.current === "expanded") setMode("compact");
   }
 
   return (
@@ -153,8 +155,8 @@ export function DynamicIsland() {
                 >
                   <NotificationList
                     items={queue}
-                    filterText={filterText}
-                    onFilterChange={setFilterText}
+                    detailId={detailId}
+                    onToggleDetail={setDetailId}
                     onDismiss={dismiss}
                     onClearAll={clearAll}
                   />

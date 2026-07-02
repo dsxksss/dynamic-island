@@ -13,7 +13,7 @@
   <Identity
     Name="DynamicIsland"
     Publisher="CN=Dynamic Island Dev"
-    Version="0.1.0.4"
+    Version="0.1.0.10"
     ProcessorArchitecture="x64" />
 
   <Properties>

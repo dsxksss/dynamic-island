@@ -1,4 +1,8 @@
-// A scrollable list of all queued notifications, shown when the pill is expanded.
+// A scrollable list of all queued notifications. Clicking a single item opens
+// it to show the full body (no truncation); the pill grows to fit.
+//
+// Visual style: iOS-like — circular avatars, clean title/subtitle layering,
+// generous spacing, each item reads as a polished card.
 
 import { AnimatePresence, motion } from "motion/react";
 
@@ -6,9 +10,9 @@ import type { Notification } from "../lib/types";
 
 interface Props {
   items: Notification[];
-  activeId?: string;
-  filterText: string;
-  onFilterChange: (t: string) => void;
+  /** Which notification is opened full (by clicking). Null = all collapsed. */
+  detailId: string | null;
+  onToggleDetail: (id: string | null) => void;
   onDismiss: (id: string) => void;
   onClearAll: () => void;
 }
@@ -20,13 +24,14 @@ function AppIcon({ name, icon }: { name: string; icon?: string }) {
       <img
         src={icon}
         alt={name}
-        className="h-8 w-8 shrink-0 rounded-lg object-cover"
+        className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-white/10"
         draggable={false}
       />
     );
   }
+  // gradient avatar fallback (looks more like a real app icon than flat grey)
   return (
-    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-[13px] font-semibold text-white">
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-[14px] font-semibold text-white ring-1 ring-white/10">
       {initial}
     </div>
   );
@@ -35,6 +40,10 @@ function AppIcon({ name, icon }: { name: string; icon?: string }) {
 function formatTime(ts: number): string {
   const d = new Date(ts);
   const now = new Date();
+  const diff = now.getTime() - ts;
+  // relative: "刚刚" / "5分钟前" / "时:分"
+  if (diff < 60_000) return "刚刚";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`;
   const sameDay = d.toDateString() === now.toDateString();
   const h = d.getHours().toString().padStart(2, "0");
   const m = d.getMinutes().toString().padStart(2, "0");
@@ -46,82 +55,80 @@ function formatTime(ts: number): string {
 
 export function NotificationList({
   items,
-  filterText,
-  onFilterChange,
+  detailId,
+  onToggleDetail,
   onDismiss,
   onClearAll,
 }: Props) {
-  // Filter by app name / title / body (case-insensitive).
-  const q = filterText.trim().toLowerCase();
-  const filtered = q
-    ? items.filter(
-        (n) =>
-          n.appName.toLowerCase().includes(q) ||
-          n.title.toLowerCase().includes(q) ||
-          n.body.toLowerCase().includes(q),
-      )
-    : items;
-
   return (
-    <div className="flex h-full w-full flex-col px-3 py-3">
-      {/* filter input */}
-      <div className="mb-2 shrink-0 px-1">
-        <input
-          type="text"
-          value={filterText}
-          onChange={(e) => {
-            e.stopPropagation();
-            onFilterChange(e.target.value);
-          }}
-          onKeyDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          placeholder="过滤通知（应用名/关键词）..."
-          className="w-full rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] text-white/80 outline-none transition-colors placeholder:text-white/30 focus:border-white/20 focus:bg-white/10"
-        />
-      </div>
-
+    <div className="flex h-full w-full flex-col px-3 pb-2 pt-3">
       {/* scrollable list */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <AnimatePresence initial={false}>
-          {filtered.map((n) => (
-            <motion.div
-              key={n.id}
-              layout
-              initial={{ opacity: 0, x: -12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12, height: 0 }}
-              transition={{ duration: 0.18 }}
-              onClick={(e) => e.stopPropagation()}
-              className="group mb-1 flex items-start gap-2.5 rounded-xl px-2 py-2 hover:bg-white/[0.06]"
-            >
-              <AppIcon name={n.appName} icon={n.icon} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-[12px] font-medium text-white/90">
-                    {n.title || n.appName}
-                  </span>
-                  <span className="shrink-0 text-[10px] tabular-nums text-white/35">
-                    {formatTime(n.timestamp)}
-                  </span>
+          {items.map((n) => {
+            const expanded = detailId === n.id;
+            return (
+              <motion.div
+                key={n.id}
+                layout
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8, height: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleDetail(expanded ? null : n.id);
+                }}
+                className={
+                  "group mb-2 cursor-pointer rounded-2xl px-3 py-2.5 transition-colors " +
+                  (expanded ? "bg-white/[0.08]" : "hover:bg-white/[0.05]")
+                }
+              >
+                {/* header row: icon + title + time */}
+                <div className="flex items-center gap-2.5">
+                  <AppIcon name={n.appName} icon={n.icon} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[12.5px] font-semibold leading-tight text-white">
+                      {n.title || n.appName}
+                    </div>
+                    <div className="truncate text-[10.5px] leading-tight text-white/40">
+                      {n.appName} · {formatTime(n.timestamp)}
+                    </div>
+                  </div>
+                  {/* dismiss (appears on hover) */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDismiss(n.id);
+                    }}
+                    className="shrink-0 self-start rounded-full p-1 text-white/30 opacity-0 transition-opacity hover:bg-white/10 hover:text-white/70 group-hover:opacity-100"
+                    aria-label="关闭"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path
+                        d="M2 2L10 10M10 2L2 10"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
                 </div>
+
+                {/* body */}
                 {n.body && (
-                  <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/55">
+                  <p
+                    className={
+                      "mt-1.5 pl-[46px] text-[11.5px] leading-relaxed text-white/65 transition-all " +
+                      (expanded ? "" : "line-clamp-1")
+                    }
+                  >
                     {n.body}
                   </p>
                 )}
-                <div className="mt-0.5 text-[10px] text-white/35">{n.appName}</div>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDismiss(n.id);
-                }}
-                className="shrink-0 self-center rounded-full px-1.5 py-0.5 text-[10px] text-white/30 opacity-0 transition-opacity hover:bg-white/10 hover:text-white/70 group-hover:opacity-100"
-              >
-                ✕
-              </button>
-            </motion.div>
-          ))}
+              </motion.div>
+            );
+          })}
         </AnimatePresence>
       </div>
 
@@ -130,16 +137,16 @@ export function NotificationList({
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="shrink-0 border-t border-white/5 pt-2"
+          className="shrink-0 pt-1.5"
         >
           <button
             onClick={(e) => {
               e.stopPropagation();
               onClearAll();
             }}
-            className="w-full rounded-lg py-1.5 text-center text-[11px] text-white/40 transition-colors hover:bg-white/5 hover:text-white/70"
+            className="w-full rounded-xl py-1.5 text-center text-[11px] font-medium text-white/35 transition-colors hover:bg-white/5 hover:text-white/70"
           >
-            全部清空
+            清空全部
           </button>
         </motion.div>
       )}

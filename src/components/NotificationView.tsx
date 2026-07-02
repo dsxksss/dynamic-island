@@ -11,13 +11,13 @@ function AppIcon({ name, icon }: { name: string; icon?: string }) {
       <img
         src={icon}
         alt={name}
-        className="h-7 w-7 shrink-0 rounded-lg object-cover"
+        className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-white/10"
         draggable={false}
       />
     );
   }
   return (
-    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/15 text-[13px] font-semibold text-white">
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-[12px] font-semibold text-white ring-1 ring-white/10">
       {initial}
     </div>
   );

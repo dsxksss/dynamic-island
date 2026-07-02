@@ -80,7 +80,12 @@ export function useNotifications(): void {
     });
     playChime();
     clearHide();
-    setMode("compact");
+    if (modeRef.current === "hidden") {
+      setMode("idle");
+      window.setTimeout(() => setMode("compact"), 60);
+    } else {
+      setMode("compact");
+    }
     scheduleAutoCollapse();
   }
 
@@ -115,7 +120,15 @@ export function useNotifications(): void {
             for (const n of list) enqueue(n);
             playChime();
             clearHide();
-            setMode("compact");
+            // If currently hidden (notch), step through idle first so the morph
+            // is a smooth height growth (8→38→60), not a jump (8→60) that causes
+            // the spring to overshoot/wobble.
+            if (modeRef.current === "hidden") {
+              setMode("idle");
+              window.setTimeout(() => setMode("compact"), 60);
+            } else {
+              setMode("compact");
+            }
             scheduleAutoCollapse();
           }
         });

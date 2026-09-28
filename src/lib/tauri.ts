@@ -102,3 +102,83 @@ export function setWindowFocusable(focusable: boolean): Promise<void> {
   });
   return focusUpdates;
 }
+
+/** Start a native window drag after the pointer passes the drag threshold. */
+export async function startWindowDragging(): Promise<void> {
+  if (!RUNNING_IN_TAURI) return;
+  await getCurrentWindow().startDragging();
+}
+
+/** Observe native window movement so a drag is persisted at its real position. */
+export function onIslandMoved(
+  cb: (position: { x: number; y: number }) => void,
+): Promise<UnlistenFn> {
+  if (!RUNNING_IN_TAURI) return Promise.resolve(() => {});
+  return getCurrentWindow().onMoved(({ payload }) => cb(payload));
+}
+
+/** Mark a native drag as active so Rust can detect release outside WebView. */
+export async function setNativeDragTracking(active: boolean): Promise<void> {
+  if (!RUNNING_IN_TAURI) return;
+  await invoke("set_drag_tracking", { active });
+}
+
+/** Subscribe to the global release event emitted after native dragging. */
+export function onDragReleased(cb: () => void): Promise<UnlistenFn> {
+  if (!RUNNING_IN_TAURI) return Promise.resolve(() => {});
+  return listen("island://drag-released", () => cb());
+}
+
+export type SnapEdge = "top" | "right" | "bottom" | "left";
+export const ISLAND_POSITION_STORAGE_KEY = "dynamic-island.window-position.v1";
+
+export interface SavedIslandPosition {
+  edge: SnapEdge;
+  x: number;
+  y: number;
+}
+
+export function readSavedIslandPosition(): SavedIslandPosition | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ISLAND_POSITION_STORAGE_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<SavedIslandPosition>;
+    if (
+      (value.edge === "top" || value.edge === "right" || value.edge === "bottom" || value.edge === "left") &&
+      Number.isFinite(value.x) &&
+      Number.isFinite(value.y)
+    ) {
+      return { edge: value.edge, x: value.x!, y: value.y! };
+    }
+  } catch {
+    // Ignore malformed local storage and use the default centered position.
+  }
+  return null;
+}
+
+export function saveIslandPosition(position: SavedIslandPosition): void {
+  try {
+    window.localStorage.setItem(ISLAND_POSITION_STORAGE_KEY, JSON.stringify(position));
+  } catch {
+    // Position persistence is best-effort when storage is unavailable.
+  }
+}
+
+/** Snap a freely positioned island window to the nearest monitor edge. */
+export async function snapWindowToNearestEdge(): Promise<SavedIslandPosition> {
+  if (!RUNNING_IN_TAURI) return { edge: "top", x: 0, y: 0 };
+  return invoke<SavedIslandPosition>("snap_island");
+}
+
+/** Restore a saved physical screen position after the native window starts. */
+export async function restoreIslandPosition(x: number, y: number): Promise<void> {
+  if (!RUNNING_IN_TAURI) return;
+  await invoke("restore_island_position", { x, y });
+}
+
+/** Re-center the island when fixed positioning is enabled. */
+export async function recenterIsland(): Promise<void> {
+  if (!RUNNING_IN_TAURI) return;
+  await invoke("recenter_island");
+}

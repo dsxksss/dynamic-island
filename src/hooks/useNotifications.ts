@@ -1,6 +1,6 @@
 // Drive the island lifecycle: poll the backend for real system notifications
-// every ~2.5s, surface new ones, and run the auto-hide / hover-reveal state
-// machine.
+// every ~2.5s and surface new ones. The water-reminder surface stays visible
+// until the user confirms it or its configured duration expires.
 
 import { useEffect, useRef } from "react";
 
@@ -13,23 +13,15 @@ import { playChime } from "../lib/sound";
 import { useIslandStore } from "../store/islandStore";
 
 const COMPACT_DURATION_MS = 5000;
-const IDLE_HIDE_DELAY_MS = 4000;
-const INITIAL_VISIBLE_MS = 3500;
 const POLL_INTERVAL_MS = 2500;
 
-// Demo feed (only used when not in Tauri — i.e. browser dev).
-const DEMO_APPS = [
-  { app: "微信", title: "小王", body: "晚上一起吃饭吗？记得叫上小李" },
-  { app: "Outlook", title: "周会提醒", body: "项目同步会议将在 10 分钟后开始" },
-  { app: "GitHub", title: "PR review", body: "alice requested your review on #142" },
-];
 let demoSeq = 0;
 
 function waterReminderVisible() {
-  return useIslandStore.getState().queue[0]?.id.startsWith("water-") === true;
+  return useIslandStore.getState().queue.some((n) => n.id.startsWith("water-"));
 }
 
-export function useNotifications(): void {
+export function useNotifications(systemNotificationsEnabled: boolean): void {
   const enqueue = useIslandStore((s) => s.enqueue);
   const setStatus = useIslandStore((s) => s.setStatus);
   const setMode = useIslandStore((s) => s.setMode);
@@ -37,18 +29,11 @@ export function useNotifications(): void {
   const mode = useIslandStore((s) => s.mode);
 
   const compactTimer = useRef<number | null>(null);
-  const hideTimer = useRef<number | null>(null);
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const setModeRef = useRef(setMode);
   setModeRef.current = setMode;
 
-  function clearHide() {
-    if (hideTimer.current) {
-      window.clearTimeout(hideTimer.current);
-      hideTimer.current = null;
-    }
-  }
   function clearCompact() {
     if (compactTimer.current) {
       window.clearTimeout(compactTimer.current);
@@ -67,38 +52,25 @@ export function useNotifications(): void {
       }
     }, COMPACT_DURATION_MS);
   }
-  function scheduleAutoHide() {
-    clearHide();
-    hideTimer.current = window.setTimeout(() => {
-      if (waterReminderVisible()) return;
-      // Hide whatever's showing (card/idle/compact). The expanded list also
-      // hides after the delay if the cursor is genuinely gone.
-      const m = modeRef.current;
-      if (m === "idle" || m === "card" || m === "compact" || m === "expanded") {
-        setModeRef.current("hidden");
-      }
-    }, IDLE_HIDE_DELAY_MS);
-  }
-
-  function surfaceNewNotification(app: string, title: string, body: string) {
+  // Browser preview follows the current product surface: show the water
+  // reminder card instead of the retired generic notification examples.
+  function surfaceDemoWaterReminder() {
+    const id = `water-demo-${Date.now()}-${demoSeq++}`;
     enqueue({
-      id: `n-${Date.now()}-${demoSeq++}`,
-      appName: app,
+      id,
+      appName: "喝水提醒",
       icon: "",
-      title,
-      body,
+      title: "该喝水了",
+      body: "长按提醒窗口任意位置 2 秒，注满水杯确认已喝水",
       timestamp: Date.now(),
-      kind: "generic" as const,
+      kind: "timer",
     });
-    playChime();
-    clearHide();
     if (modeRef.current === "hidden") {
       setMode("idle");
       window.setTimeout(() => setMode("card"), 60);
     } else {
       setMode("card");
     }
-    scheduleAutoCollapse();
   }
 
   // --- initial status pull --------------------------------------------------
@@ -121,51 +93,66 @@ export function useNotifications(): void {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  // --- initial auto-hide ----------------------------------------------------
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      if (modeRef.current === "idle") setModeRef.current("hidden");
-    }, INITIAL_VISIBLE_MS);
-    return () => window.clearTimeout(t);
-  }, []);
-
   // --- notification polling -------------------------------------------------
   useEffect(() => {
-    const inTauri = "__TAURI_INTERNALS__" in window;
+    if (!systemNotificationsEnabled) {
+      clearCompact();
+      // Remove only system messages; preserve the independent water reminder.
+      const state = useIslandStore.getState();
+      const queue = state.queue.filter((n) => n.id.startsWith("water-"));
+      useIslandStore.setState({ queue, mode: queue.length ? "card" : "idle" });
+      return;
+    }
 
-    if (inTauri) {
+    if ("__TAURI_INTERNALS__" in window) {
+      let cancelled = false;
+      let pending = false;
+      let revealTimer: number | undefined;
       // Real polling: ask the backend for new system notifications.
       const poll = () => {
+        if (cancelled || pending) return;
+        pending = true;
         pollNotifications().then((list) => {
+          // An IPC request can finish after the switch was turned off.
+          if (cancelled) return;
           if (list.length > 0) {
             for (const n of list) enqueue(n);
             playChime();
-            clearHide();
             // Go straight to expanded (no compact intermediate). If hidden, step
             // through idle briefly so the morph is a smooth height growth.
             if (modeRef.current === "hidden") {
               setMode("idle");
-              window.setTimeout(() => setMode("card"), 60);
+              revealTimer = window.setTimeout(() => {
+                if (!cancelled) setMode("card");
+              }, 60);
             } else {
               setMode("card");
             }
             scheduleAutoCollapse();
           }
-        });
+        }).catch((error) => {
+          if (!cancelled) console.error("Failed to poll system notifications", error);
+        }).finally(() => { pending = false; });
       };
       poll();
       const id = window.setInterval(poll, POLL_INTERVAL_MS);
-      return () => window.clearInterval(id);
+      return () => {
+        cancelled = true;
+        window.clearInterval(id);
+        window.clearTimeout(revealTimer);
+        clearCompact();
+      };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [systemNotificationsEnabled, enqueue, setMode]);
 
-    // Browser dev: demo feed every 12s.
-    const pick = DEMO_APPS[demoSeq % DEMO_APPS.length];
-    demoSeq++;
-    surfaceNewNotification(pick.app, pick.title, pick.body);
+  useEffect(() => {
+    if ("__TAURI_INTERNALS__" in window) return;
+
+    // Browser dev: show the current water-reminder surface every 12s.
+    surfaceDemoWaterReminder();
     const id = window.setInterval(() => {
-      const p = DEMO_APPS[demoSeq % DEMO_APPS.length];
-      demoSeq++;
-      surfaceNewNotification(p.app, p.title, p.body);
+      surfaceDemoWaterReminder();
     }, 12000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -178,13 +165,7 @@ export function useNotifications(): void {
       setOverPill(overPill);
       if (hovering) {
         // Cursor in the top summon zone — reveal (if hidden) and stay.
-        clearHide();
         if (modeRef.current === "hidden") setMode("idle");
-      } else if (!overPill) {
-        // Cursor left both the top edge AND the pill — start the hide countdown.
-        // The expanded list stays until the countdown fires (gives the user a
-        // moment to re-enter); card/idle hide promptly.
-        scheduleAutoHide();
       }
     }).then((u) => unlisteners.push(u));
     return () => unlisteners.forEach((u) => u());

@@ -191,8 +191,9 @@ export function useWaterReminder() {
       const state = useIslandStore.getState();
       const wasTop = state.queue[0]?.id === active.id;
       remove(active.id);
-      // Expiring water must never close an unrelated notification.
-      if (wasTop && (state.mode === "card" || state.mode === "compact")) setMode("hidden");
+      // Expiring water must never close an unrelated notification. Keep the
+      // idle pill visible so the next reminder does not require top-edge hover.
+      if (wasTop && (state.mode === "card" || state.mode === "compact")) setMode("idle");
     };
     stopActiveRef.current = stopActive;
     const unsubscribe = useIslandStore.subscribe((state) => {

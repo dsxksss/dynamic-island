@@ -7,6 +7,10 @@ import type { WaterReminderSettings } from "../lib/types";
 interface Props {
   settings: WaterReminderSettings;
   onChange: (patch: Partial<WaterReminderSettings>) => void;
+  fixedPosition: boolean;
+  onFixedPositionChange: (fixed: boolean) => void;
+  systemNotificationsEnabled: boolean;
+  onSystemNotificationsChange: (enabled: boolean) => void;
   onClose: () => void;
   onTestSound: () => void;
   todayCount: number;
@@ -17,6 +21,10 @@ interface Props {
 export function WaterReminderPanel({
   settings,
   onChange,
+  fixedPosition,
+  onFixedPositionChange,
+  systemNotificationsEnabled,
+  onSystemNotificationsChange,
   onClose,
   onTestSound,
   todayCount,
@@ -48,9 +56,23 @@ export function WaterReminderPanel({
     })}`;
   }, [nextReminderAt, settings.enabled]);
   const intervalMs = settings.intervalMinutes * 60_000;
-  const progress = settings.enabled && nextReminderAt !== null
-    ? Math.min(1, Math.max(0, 1 - (nextReminderAt - now) / intervalMs))
+  // The reminder bar represents the water that is still "in the tank": it
+  // starts full after a reminder and drains toward empty as the next reminder
+  // approaches.
+  const remainingWater = settings.enabled && nextReminderAt !== null
+    ? Math.min(1, Math.max(0, (nextReminderAt - now) / intervalMs))
     : 0;
+  const waterStatus = !settings.enabled
+    ? { label: "提醒已暂停", className: "text-white/35", barClassName: "bg-white/20" }
+    : nextReminderAt === null
+      ? { label: "等待补水计划", className: "text-white/45", barClassName: "bg-white/20" }
+      : remainingWater > 0.66
+        ? { label: "水分充足", className: "text-cyan-300/80", barClassName: "bg-gradient-to-r from-cyan-300 to-sky-400" }
+        : remainingWater > 0.33
+          ? { label: "注意补水", className: "text-amber-300/85", barClassName: "bg-gradient-to-r from-amber-300 to-yellow-400" }
+          : remainingWater > 0.08
+            ? { label: "水分偏低", className: "text-orange-300/90", barClassName: "bg-gradient-to-r from-orange-300 to-amber-500" }
+            : { label: "缺水状态", className: "text-rose-300/95", barClassName: "bg-gradient-to-r from-rose-400 to-red-500" };
 
   function commitInterval() {
     const parsed = Number(intervalInput);
@@ -94,6 +116,55 @@ export function WaterReminderPanel({
       </div>
 
       <div className="water-settings-scroll min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-2">
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
+          <div>
+            <div className="text-[12px] font-medium">监听系统消息</div>
+            <div className="mt-0.5 text-[10px] text-white/40">
+              {systemNotificationsEnabled ? "在灵动岛显示系统通知" : "系统消息监听已关闭，喝水提醒不受影响"}
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-label="监听系统消息"
+            aria-checked={systemNotificationsEnabled}
+            onClick={() => onSystemNotificationsChange(!systemNotificationsEnabled)}
+            className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/50 ${
+              systemNotificationsEnabled ? "bg-cyan-400" : "bg-white/15"
+            }`}
+          >
+            <span
+              className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                systemNotificationsEnabled ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
+          <div>
+            <div className="text-[12px] font-medium">固定灵动岛位置</div>
+            <div className="mt-0.5 text-[10px] text-white/40">
+              {fixedPosition ? "固定在当前屏幕顶部中央" : "拖动后吸附到最近的屏幕边缘"}
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={fixedPosition}
+            onClick={() => onFixedPositionChange(!fixedPosition)}
+            className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/50 ${
+              fixedPosition ? "bg-cyan-400" : "bg-white/15"
+            }`}
+          >
+            <span
+              className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                fixedPosition ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
         <div className="flex items-center justify-between rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
           <div>
             <div className="text-[12px] font-medium">启用喝水提醒</div>
@@ -322,15 +393,14 @@ export function WaterReminderPanel({
             </button>
           </div>
         </div>
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10" aria-label="距离下次喝水提醒的进度">
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10" aria-label="距离下次喝水提醒的剩余水分">
           <div
-            className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-sky-400 transition-[width] duration-700"
-            style={{ width: `${progress * 100}%` }}
+            className={`h-full rounded-full transition-[width] duration-700 ${waterStatus.barClassName}`}
+            style={{ width: `${remainingWater * 100}%` }}
           />
         </div>
-        <div className="mt-1 flex items-center justify-between text-[10px] text-white/30">
-          <span>支持 1–240 分钟 · 每次提醒保留 {settings.durationSeconds} 秒</span>
-          <span className="text-cyan-300/70">💧 保持水分</span>
+        <div className="mt-1 flex items-center justify-end text-[10px] text-white/30">
+          <span className={waterStatus.className}>💧 {waterStatus.label}</span>
         </div>
       </div>
       {timeTarget && (

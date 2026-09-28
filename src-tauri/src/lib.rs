@@ -43,6 +43,9 @@ pub fn run() {
                 .get_webview_window("island")
                 .expect("island window is declared in tauri.conf.json");
 
+            window_setup::center_top(&window);
+            // Apply the transparent-window workaround after any narrow-monitor
+            // resize performed by `center_top`, then reassert the final anchor.
             window_setup::apply_transparency_workaround(&window);
             window_setup::center_top(&window);
             // Never steal focus from other apps.
@@ -156,6 +159,9 @@ pub fn run() {
             dismiss_notification,
             set_pill_rect_cmd,
             recenter_island,
+            snap_island,
+            restore_island_position,
+            set_drag_tracking,
             set_water_tray_state,
         ])
         .run(tauri::generate_context!())
@@ -211,6 +217,51 @@ fn set_pill_rect_cmd(
 #[tauri::command]
 fn recenter_island(app: tauri::AppHandle) {
     window_setup::recenter(&app);
+}
+
+/// Snap a freely dragged island to its nearest monitor edge and return the
+/// edge and final physical position so the frontend can persist it.
+#[derive(serde::Serialize)]
+struct SnapIslandResult {
+    edge: String,
+    x: i32,
+    y: i32,
+}
+
+#[tauri::command]
+fn snap_island(app: tauri::AppHandle) -> SnapIslandResult {
+    let Some(window) = app.get_webview_window("island") else {
+        return SnapIslandResult {
+            edge: "top".into(),
+            x: 0,
+            y: 0,
+        };
+    };
+    let edge = window_setup::snap_to_nearest_edge(&window).to_string();
+    let position = window
+        .outer_position()
+        .unwrap_or(tauri::PhysicalPosition::new(0, 0));
+    SnapIslandResult {
+        edge,
+        x: position.x,
+        y: position.y,
+    }
+}
+
+/// Restore a saved physical screen position from the frontend.
+#[tauri::command]
+fn restore_island_position(app: tauri::AppHandle, x: i32, y: i32) {
+    if let Some(window) = app.get_webview_window("island") {
+        window_setup::restore_position(&window, x, y);
+    }
+}
+
+/// Tell the backend that a native window drag is active. The cursor watcher
+/// uses this flag to detect the global mouse-button release that WebView may
+/// not deliver after `startDragging()` captures the pointer.
+#[tauri::command]
+fn set_drag_tracking(active: bool) {
+    window_setup::set_native_dragging(active);
 }
 
 /// Basic platform/identity info.

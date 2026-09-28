@@ -200,7 +200,10 @@ export function DynamicIsland({
                     onClose={() => {
                       void setClickThrough(true).catch(console.error);
                       useIslandStore.getState().setOverPill(false);
-                      setMode("hidden");
+                      // A reminder can arrive while this panel is open. Keep
+                      // it visible when the user closes settings so they do
+                      // not need to summon the island again from the top edge.
+                      setMode(queue[0]?.kind === "timer" ? "card" : "hidden");
                       onCloseSettings();
                     }}
                     onTestSound={onTestWaterSound}

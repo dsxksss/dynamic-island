@@ -1,6 +1,6 @@
 [package]
 name = "dynamic-island"
-version = "1.2.2"
+version = "1.2.3"
 description = "桌面灵动岛 - Hook Windows 通知"
 authors = ["you"]
 edition = "2021"

@@ -58,7 +58,7 @@ pub fn run() {
             let toggle_item = MenuItem::with_id(
                 app,
                 "toggle",
-                "隐藏灵动岛",
+                "灵动岛显示：已开启",
                 true,
                 None::<&str>,
             )?;
@@ -91,6 +91,8 @@ pub fn run() {
             // Clone the autostart menu item so we can update its text from the
             // toggle handler (MenuItem is cheaply cloneable, backed by an Arc).
             let autostart_item_handle = autostart_item.clone();
+            let toggle_item_handle = toggle_item.clone();
+            let toggle_item_left_handle = toggle_item.clone();
 
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -104,8 +106,10 @@ pub fn run() {
                         if let Some(w) = app_handle.get_webview_window("island") {
                             if w.is_visible().unwrap_or(true) {
                                 let _ = w.hide();
+                                let _ = toggle_item_handle.set_text("灵动岛显示：已关闭");
                             } else {
                                 let _ = w.show();
+                                let _ = toggle_item_handle.set_text("灵动岛显示：已开启");
                             }
                         }
                     }
@@ -127,7 +131,7 @@ pub fn run() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
+                .on_tray_icon_event(move |tray, event| {
                     // Left-click toggles focus on the island.
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -137,6 +141,7 @@ pub fn run() {
                         if let Some(w) = tray.app_handle().get_webview_window("island") {
                             let _ = w.show();
                             let _ = w.set_focus();
+                            let _ = toggle_item_left_handle.set_text("灵动岛显示：已开启");
                         }
                     }
                 })

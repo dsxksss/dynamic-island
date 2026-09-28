@@ -40,6 +40,7 @@ export default function App() {
         onWaterReminderConfirmed={waterReminder.confirmWaterReminder}
         todayWaterCount={waterReminder.todayCount}
         nextWaterReminderAt={waterReminder.nextReminderAt}
+        onResetWaterCountdown={waterReminder.resetCountdown}
       />
     </div>
   );

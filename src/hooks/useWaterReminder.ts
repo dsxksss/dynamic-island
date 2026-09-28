@@ -110,13 +110,12 @@ function getActiveWindow(now: Date, settings: WaterReminderSettings) {
   return null;
 }
 
-function getNextDueAt(now: Date, settings: WaterReminderSettings): number {
-  const active = getActiveWindow(now, settings);
+function getNextDueAt(now: Date, settings: WaterReminderSettings, anchorAt = now.getTime()): number {
+  const anchor = new Date(anchorAt);
+  const active = getActiveWindow(anchor, settings);
   if (active) {
     const intervalMs = settings.intervalMinutes * 60_000;
-    const elapsed = now.getTime() - active.start.getTime();
-    const next =
-      active.start.getTime() + (Math.floor(elapsed / intervalMs) + 1) * intervalMs;
+    const next = anchorAt + intervalMs;
     if (next <= active.end.getTime()) return next;
   }
 
@@ -140,6 +139,7 @@ export function useWaterReminder() {
   const nextDueRef = useRef<number | null>(null);
   const activeRef = useRef<{ id: string; expiresAt: number; visible: boolean } | null>(null);
   const stopSoundRef = useRef<(() => void) | null>(null);
+  const stopActiveRef = useRef<() => void>(() => {});
   const remove = useIslandStore((state) => state.remove);
 
   useEffect(() => {
@@ -189,6 +189,7 @@ export function useWaterReminder() {
       // Expiring water must never close an unrelated notification.
       if (wasTop && (state.mode === "card" || state.mode === "compact")) setMode("hidden");
     };
+    stopActiveRef.current = stopActive;
     const unsubscribe = useIslandStore.subscribe((state) => {
       if (activeRef.current?.visible && !state.queue.some((n) => n.id === activeRef.current?.id)) {
         stopActive();
@@ -243,7 +244,7 @@ export function useWaterReminder() {
         expiryTimer = window.setTimeout(stopActive, Math.max(0, expiresAt - Date.now()));
       }
 
-      nextDueRef.current = getNextDueAt(now, current);
+      nextDueRef.current = getNextDueAt(now, current, dueAt);
       setNextReminderAt(nextDueRef.current);
     };
 
@@ -253,8 +254,23 @@ export function useWaterReminder() {
       window.clearInterval(timer);
       unsubscribe();
       stopActive();
+      stopActiveRef.current = () => {};
     };
   }, [enqueue, remove, setMode, settings.enabled, settings.endTime, settings.intervalMinutes, settings.startTime]);
+
+  function resetCountdown() {
+    const current = settingsRef.current;
+    stopActiveRef.current();
+    if (!current.enabled) {
+      nextDueRef.current = null;
+      setNextReminderAt(null);
+      return;
+    }
+    const now = new Date();
+    const next = getNextDueAt(now, current, now.getTime());
+    nextDueRef.current = next;
+    setNextReminderAt(next);
+  }
 
   function confirmWaterReminder(id: string) {
     if (activeRef.current?.id !== id || typeof window === "undefined") return;
@@ -272,5 +288,5 @@ export function useWaterReminder() {
     setSettings((current) => normalizeSettings({ ...current, ...patch }));
   }
 
-  return { settings, updateSettings, todayCount, nextReminderAt, confirmWaterReminder };
+  return { settings, updateSettings, todayCount, nextReminderAt, confirmWaterReminder, resetCountdown };
 }

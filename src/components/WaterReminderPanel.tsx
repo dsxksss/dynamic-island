@@ -11,6 +11,7 @@ interface Props {
   onTestSound: () => void;
   todayCount: number;
   nextReminderAt: number | null;
+  onResetCountdown: () => void;
 }
 
 export function WaterReminderPanel({
@@ -20,6 +21,7 @@ export function WaterReminderPanel({
   onTestSound,
   todayCount,
   nextReminderAt,
+  onResetCountdown,
 }: Props) {
   const [intervalInput, setIntervalInput] = useState(() => String(settings.intervalMinutes));
   const [timeTarget, setTimeTarget] = useState<"startTime" | "endTime" | null>(null);
@@ -267,9 +269,19 @@ export function WaterReminderPanel({
       <div className="mt-3 shrink-0 border-t border-white/10 pt-3">
         <div className="flex items-center justify-between text-[10px] text-white/55">
           <span>今日已喝水 {todayCount} 次</span>
-          <span className={settings.enabled ? "text-cyan-200/75" : "text-white/35"}>
-            {nextReminderText}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={settings.enabled ? "text-cyan-200/75" : "text-white/35"}>
+              {nextReminderText}
+            </span>
+            <button
+              type="button"
+              onClick={onResetCountdown}
+              disabled={!settings.enabled}
+              className="rounded-md px-1.5 py-0.5 text-[10px] text-white/45 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              重置倒计时
+            </button>
+          </div>
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10" aria-label="距离下次喝水提醒的进度">
           <div

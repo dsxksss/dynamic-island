@@ -40,6 +40,7 @@ interface DynamicIslandProps {
   onWaterReminderConfirmed: (id: string) => void;
   todayWaterCount: number;
   nextWaterReminderAt: number | null;
+  onResetWaterCountdown: () => void;
 }
 
 /** Pill geometry per mode.
@@ -76,6 +77,7 @@ export function DynamicIsland({
   onWaterReminderConfirmed,
   todayWaterCount,
   nextWaterReminderAt,
+  onResetWaterCountdown,
 }: DynamicIslandProps) {
   const mode = useIslandStore((s) => s.mode);
   const setMode = useIslandStore((s) => s.setMode);
@@ -197,6 +199,7 @@ export function DynamicIsland({
                     onChange={onWaterReminderChange}
                     todayCount={todayWaterCount}
                     nextReminderAt={nextWaterReminderAt}
+                    onResetCountdown={onResetWaterCountdown}
                     onClose={() => {
                       void setClickThrough(true).catch(console.error);
                       useIslandStore.getState().setOverPill(false);

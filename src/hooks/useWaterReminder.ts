@@ -13,8 +13,9 @@ export const DEFAULT_WATER_REMINDER_SETTINGS: WaterReminderSettings = {
   endTime: "18:00",
   intervalMinutes: 20,
   durationSeconds: 30,
+  confirmHoldSeconds: 2,
+  confirmMethod: "hold",
   soundEnabled: true,
-  fullscreenDnd: false,
 };
 
 function normalizeSettings(
@@ -22,6 +23,7 @@ function normalizeSettings(
 ): WaterReminderSettings {
   const interval = Number(value.intervalMinutes);
   const duration = Number(value.durationSeconds);
+  const confirmHold = Number(value.confirmHoldSeconds);
   return {
     enabled: value.enabled === true,
     startTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(value.startTime ?? "")
@@ -37,7 +39,10 @@ function normalizeSettings(
     durationSeconds: Number.isFinite(duration)
       ? Math.min(300, Math.max(5, Math.round(duration)))
       : DEFAULT_WATER_REMINDER_SETTINGS.durationSeconds,
-    fullscreenDnd: value.fullscreenDnd === true,
+    confirmHoldSeconds: Number.isFinite(confirmHold)
+      ? Math.min(10, Math.max(0, Math.round(confirmHold)))
+      : DEFAULT_WATER_REMINDER_SETTINGS.confirmHoldSeconds,
+    confirmMethod: value.confirmMethod === "hover" ? "hover" : "hold",
   };
 }
 
@@ -218,9 +223,8 @@ export function useWaterReminder() {
       if (!activeRef.current && activeWindow && dueAt >= activeWindow.start.getTime() && now.getTime() < expiresAt) {
         stopActive();
         const reminderId = `water-${dueAt}`;
-        activeRef.current = { id: reminderId, expiresAt, visible: !current.fullscreenDnd };
-        if (!current.fullscreenDnd) {
-          enqueue({
+        activeRef.current = { id: reminderId, expiresAt, visible: true };
+        enqueue({
             id: reminderId,
             appName: "喝水提醒",
             icon: "",
@@ -228,17 +232,14 @@ export function useWaterReminder() {
             body: `现在是 ${dueDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}，喝一杯水，保持状态。`,
             timestamp: dueAt,
             kind: "timer",
-          });
-        }
+        });
         if (current.soundEnabled) stopSoundRef.current = startWaterReminderSound(expiresAt);
 
-        if (!current.fullscreenDnd) {
-          if (useIslandStore.getState().mode === "hidden") {
-            setMode("idle");
-            revealTimer = window.setTimeout(() => setMode("card"), 60);
-          } else {
-            setMode("card");
-          }
+        if (useIslandStore.getState().mode === "hidden") {
+          setMode("idle");
+          revealTimer = window.setTimeout(() => setMode("card"), 60);
+        } else {
+          setMode("card");
         }
 
         expiryTimer = window.setTimeout(stopActive, Math.max(0, expiresAt - Date.now()));

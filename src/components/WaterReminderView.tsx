@@ -4,15 +4,15 @@ import { motion, useIsPresent } from "motion/react";
 import type { Notification } from "../lib/types";
 import { playWaterConfirmedSound, startWaterHoldSound } from "../lib/sound";
 
-const HOLD_DURATION_MS = 2000;
-
 interface Props {
   n: Notification;
   soundEnabled: boolean;
+  holdDurationSeconds: number;
+  confirmMethod: "hold" | "hover";
   onConfirmed: () => void;
 }
 
-export function WaterReminderView({ n, soundEnabled, onConfirmed }: Props) {
+export function WaterReminderView({ n, soundEnabled, holdDurationSeconds, confirmMethod, onConfirmed }: Props) {
   const isPresent = useIsPresent();
   const [progress, setProgress] = useState(0);
   const [holding, setHolding] = useState(false);
@@ -20,6 +20,32 @@ export function WaterReminderView({ n, soundEnabled, onConfirmed }: Props) {
   const startRef = useRef<number | null>(null);
   const completedRef = useRef(false);
   const stopHoldSoundRef = useRef<(() => void) | null>(null);
+  const holdDurationMs = holdDurationSeconds * 1000;
+
+  function completeConfirmation() {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    stopFrame();
+    stopHoldSound();
+    setHolding(false);
+    setProgress(1);
+    onConfirmed();
+    if (soundEnabled) playWaterConfirmedSound();
+  }
+
+  function confirmByHover() {
+    if (confirmMethod !== "hover" || completedRef.current || !isPresent) return;
+    if (startRef.current !== null) return;
+    if (holdDurationMs <= 0) {
+      completeConfirmation();
+      return;
+    }
+    startRef.current = performance.now();
+    setProgress(0);
+    setHolding(true);
+    if (soundEnabled) stopHoldSoundRef.current = startWaterHoldSound(holdDurationMs);
+    frameRef.current = window.requestAnimationFrame(tick);
+  }
 
   function stopHoldSound() {
     stopHoldSoundRef.current?.();
@@ -45,29 +71,28 @@ export function WaterReminderView({ n, soundEnabled, onConfirmed }: Props) {
     const startedAt = startRef.current;
     if (startedAt === null || completedRef.current) return;
 
-    const nextProgress = Math.min(1, (now - startedAt) / HOLD_DURATION_MS);
+    const nextProgress = Math.min(1, (now - startedAt) / holdDurationMs);
     setProgress(nextProgress);
     if (nextProgress >= 1) {
-      completedRef.current = true;
-      stopFrame();
-      stopHoldSound();
-      setHolding(false);
-      onConfirmed();
-      if (soundEnabled) playWaterConfirmedSound();
+      completeConfirmation();
       return;
     }
     frameRef.current = window.requestAnimationFrame(tick);
   }
 
   function beginHold(event: PointerEvent<HTMLDivElement>) {
-    if (!isPresent || !event.isPrimary || startRef.current !== null || completedRef.current || event.button !== 0) return;
+    if (confirmMethod !== "hold" || !isPresent || !event.isPrimary || startRef.current !== null || completedRef.current || event.button !== 0) return;
     event.preventDefault();
+    if (holdDurationMs <= 0) {
+      completeConfirmation();
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
     stopFrame();
     startRef.current = performance.now();
     setProgress(0);
     setHolding(true);
-    if (soundEnabled) stopHoldSoundRef.current = startWaterHoldSound(HOLD_DURATION_MS);
+    if (soundEnabled) stopHoldSoundRef.current = startWaterHoldSound(holdDurationMs);
     frameRef.current = window.requestAnimationFrame(tick);
   }
 
@@ -90,6 +115,8 @@ export function WaterReminderView({ n, soundEnabled, onConfirmed }: Props) {
     <div
       className="flex h-full w-full touch-none select-none items-center gap-3 px-4 py-3"
       onPointerDown={beginHold}
+      onPointerEnter={confirmByHover}
+      onPointerLeave={confirmMethod === "hover" ? resetHold : undefined}
       onPointerUp={resetHold}
       onPointerCancel={resetHold}
       onLostPointerCapture={resetHold}
@@ -170,7 +197,11 @@ export function WaterReminderView({ n, soundEnabled, onConfirmed }: Props) {
         </div>
         <div className="text-[13px] font-semibold leading-snug text-white">{n.title}</div>
         <p className="mt-1 text-[11px] leading-relaxed text-white/60">
-          长按提醒窗口任意位置 2 秒，注满水杯确认已喝水
+          {confirmMethod === "hold"
+            ? <>长按提醒窗口任意位置 {holdDurationSeconds} 秒，注满水杯确认已喝水</>
+            : (holdDurationSeconds === 0
+              ? "鼠标移入提醒窗口立即确认已喝水"
+              : <>鼠标移入提醒窗口并保持 {holdDurationSeconds} 秒，确认已喝水</>)}
         </p>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
           <motion.div
@@ -180,7 +211,7 @@ export function WaterReminderView({ n, soundEnabled, onConfirmed }: Props) {
           />
         </div>
         <div className="mt-1 text-[9px] text-white/35">
-          {holding ? `${Math.round(progress * 100)}% · 继续按住` : "松开后进度会重新开始"}
+          {confirmMethod === "hover" ? (completedRef.current ? "已确认" : (holding ? `${Math.round(progress * 100)}% · 继续保持` : "移入窗口开始确认")) : (holding ? `${Math.round(progress * 100)}% · 继续按住` : "松开后进度会重新开始")}
         </div>
       </div>
     </div>

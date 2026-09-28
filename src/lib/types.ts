@@ -8,8 +8,9 @@ export interface WaterReminderSettings {
   endTime: string;
   intervalMinutes: number;
   durationSeconds: number;
+  confirmHoldSeconds: number;
+  confirmMethod: "hold" | "hover";
   soundEnabled: boolean;
-  fullscreenDnd: boolean;
 }
 
 export interface Notification {

@@ -26,7 +26,9 @@ export function WaterReminderPanel({
   const [intervalInput, setIntervalInput] = useState(() => String(settings.intervalMinutes));
   const [timeTarget, setTimeTarget] = useState<"startTime" | "endTime" | null>(null);
   const [durationInput, setDurationInput] = useState(String(settings.durationSeconds));
+  const [holdInput, setHoldInput] = useState(String(settings.confirmHoldSeconds));
   useEffect(() => setDurationInput(String(settings.durationSeconds)), [settings.durationSeconds]);
+  useEffect(() => setHoldInput(String(settings.confirmHoldSeconds)), [settings.confirmHoldSeconds]);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -212,6 +214,64 @@ export function WaterReminderPanel({
           </label>
         </div>
 
+        <div className="flex items-center justify-between gap-2 rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
+          <div>
+            <div className="text-[12px] font-medium">确认持续时长</div>
+            <div className="mt-0.5 text-[10px] text-white/40">0–10 秒 · 长按或移入后持续确认</div>
+          </div>
+          <label className="flex shrink-0 items-center gap-2 rounded-xl bg-black/20 px-3 py-2">
+            <input
+              type="number"
+              min={0}
+              max={10}
+              step={1}
+              aria-label="确认持续时长（秒）"
+              value={holdInput}
+              onChange={(event) => setHoldInput(event.target.value)}
+              onBlur={() => {
+                const parsed = Number(holdInput);
+                const seconds = holdInput.trim() && Number.isFinite(parsed)
+                  ? Math.min(10, Math.max(0, Math.round(parsed)))
+                  : settings.confirmHoldSeconds;
+                setHoldInput(String(seconds));
+                onChange({ confirmHoldSeconds: seconds });
+              }}
+              onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+              className="w-10 bg-transparent text-center text-[13px] font-semibold tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-cyan-200/50"
+            />
+            <span className="text-[10px] text-white/45">秒</span>
+          </label>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
+          <div>
+            <div className="text-[12px] font-medium">确认方式</div>
+            <div className="mt-0.5 text-[10px] text-white/40">
+              {settings.confirmMethod === "hold"
+                ? <>长按提醒窗口 {settings.confirmHoldSeconds} 秒确认</>
+                : (settings.confirmHoldSeconds === 0
+                  ? "鼠标移入提醒窗口立即确认"
+                  : <>鼠标移入并保持 {settings.confirmHoldSeconds} 秒确认</>)}
+            </div>
+          </div>
+          <div className="flex shrink-0 rounded-xl bg-black/20 p-1 text-[10px]">
+            <button
+              type="button"
+              onClick={() => onChange({ confirmMethod: "hold" })}
+              className={settings.confirmMethod === "hold" ? "rounded-lg bg-cyan-400 px-2.5 py-1.5 text-slate-950 transition-colors" : "rounded-lg px-2.5 py-1.5 text-white/55 transition-colors hover:text-white"}
+            >
+              长按
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ confirmMethod: "hover" })}
+              className={settings.confirmMethod === "hover" ? "rounded-lg bg-cyan-400 px-2.5 py-1.5 text-slate-950 transition-colors" : "rounded-lg px-2.5 py-1.5 text-white/55 transition-colors hover:text-white"}
+            >
+              移入
+            </button>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
           <div>
             <div className="text-[12px] font-medium">提醒音效</div>
@@ -243,27 +303,6 @@ export function WaterReminderPanel({
           </div>
         </div>
 
-        <div className="flex items-center justify-between rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
-          <div>
-            <div className="text-[12px] font-medium">全屏游戏免打扰</div>
-            <div className="mt-0.5 text-[10px] text-white/40">开启后只播放提醒音效，不弹出水杯窗口</div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={settings.fullscreenDnd}
-            onClick={() => onChange({ fullscreenDnd: !settings.fullscreenDnd })}
-            className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/50 ${
-              settings.fullscreenDnd ? "bg-cyan-400" : "bg-white/15"
-            }`}
-          >
-            <span
-              className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                settings.fullscreenDnd ? "translate-x-5" : "translate-x-0"
-              }`}
-            />
-          </button>
-        </div>
       </div>
 
       <div className="mt-3 shrink-0 border-t border-white/10 pt-3">

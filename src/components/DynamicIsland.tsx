@@ -244,6 +244,8 @@ export function DynamicIsland({
                     <WaterReminderView
                       n={queue[0]}
                       soundEnabled={waterReminder.soundEnabled}
+                      holdDurationSeconds={waterReminder.confirmHoldSeconds}
+                      confirmMethod={waterReminder.confirmMethod}
                       onConfirmed={() => {
                         onWaterReminderConfirmed(queue[0].id);
                         dismiss(queue[0].id);

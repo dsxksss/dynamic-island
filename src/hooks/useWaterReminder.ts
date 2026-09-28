@@ -12,6 +12,7 @@ export const DEFAULT_WATER_REMINDER_SETTINGS: WaterReminderSettings = {
   startTime: "08:00",
   endTime: "18:00",
   intervalMinutes: 20,
+  durationSeconds: 30,
   soundEnabled: true,
   fullscreenDnd: false,
 };
@@ -20,18 +21,22 @@ function normalizeSettings(
   value: Partial<WaterReminderSettings>,
 ): WaterReminderSettings {
   const interval = Number(value.intervalMinutes);
+  const duration = Number(value.durationSeconds);
   return {
     enabled: value.enabled === true,
-    startTime: /^\d{2}:\d{2}$/.test(value.startTime ?? "")
+    startTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(value.startTime ?? "")
       ? value.startTime!
       : DEFAULT_WATER_REMINDER_SETTINGS.startTime,
-    endTime: /^\d{2}:\d{2}$/.test(value.endTime ?? "")
+    endTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(value.endTime ?? "")
       ? value.endTime!
       : DEFAULT_WATER_REMINDER_SETTINGS.endTime,
     intervalMinutes: Number.isFinite(interval)
       ? Math.min(240, Math.max(1, Math.round(interval)))
       : DEFAULT_WATER_REMINDER_SETTINGS.intervalMinutes,
     soundEnabled: value.soundEnabled !== false,
+    durationSeconds: Number.isFinite(duration)
+      ? Math.min(300, Math.max(5, Math.round(duration)))
+      : DEFAULT_WATER_REMINDER_SETTINGS.durationSeconds,
     fullscreenDnd: value.fullscreenDnd === true,
   };
 }
@@ -133,7 +138,7 @@ export function useWaterReminder() {
   const enqueue = useIslandStore((state) => state.enqueue);
   const setMode = useIslandStore((state) => state.setMode);
   const nextDueRef = useRef<number | null>(null);
-  const activeRef = useRef<{ id: string; expiresAt: number } | null>(null);
+  const activeRef = useRef<{ id: string; expiresAt: number; visible: boolean } | null>(null);
   const stopSoundRef = useRef<(() => void) | null>(null);
   const remove = useIslandStore((state) => state.remove);
 
@@ -185,7 +190,7 @@ export function useWaterReminder() {
       if (wasTop && (state.mode === "card" || state.mode === "compact")) setMode("hidden");
     };
     const unsubscribe = useIslandStore.subscribe((state) => {
-      if (activeRef.current && !state.queue.some((n) => n.id === activeRef.current?.id)) {
+      if (activeRef.current?.visible && !state.queue.some((n) => n.id === activeRef.current?.id)) {
         stopActive();
       }
     });
@@ -207,11 +212,12 @@ export function useWaterReminder() {
       const dueDate = new Date(dueAt);
       const activeWindow = getActiveWindow(now, current);
       // Skip missed slots after sleep; never replay a backlog of old reminders.
-      const expiresAt = dueAt + 30_000;
-      if (activeWindow && dueAt >= activeWindow.start.getTime() && now.getTime() < expiresAt) {
+      const expiresAt = dueAt + current.durationSeconds * 1000;
+      // Keep the current reminder's full duration if intervals overlap.
+      if (!activeRef.current && activeWindow && dueAt >= activeWindow.start.getTime() && now.getTime() < expiresAt) {
         stopActive();
         const reminderId = `water-${dueAt}`;
-        activeRef.current = { id: reminderId, expiresAt };
+        activeRef.current = { id: reminderId, expiresAt, visible: !current.fullscreenDnd };
         if (!current.fullscreenDnd) {
           enqueue({
             id: reminderId,

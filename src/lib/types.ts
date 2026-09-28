@@ -7,6 +7,7 @@ export interface WaterReminderSettings {
   startTime: string;
   endTime: string;
   intervalMinutes: number;
+  durationSeconds: number;
   soundEnabled: boolean;
   fullscreenDnd: boolean;
 }

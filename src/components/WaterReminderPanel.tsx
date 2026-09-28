@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { TimePicker } from "./TimePicker";
 
 import type { WaterReminderSettings } from "../lib/types";
 
@@ -11,79 +13,6 @@ interface Props {
   nextReminderAt: number | null;
 }
 
-interface TimeFieldProps {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}
-
-function TimeField({ label, value, onChange }: TimeFieldProps) {
-  const [hour, minute] = value.split(":");
-  const [hourInput, setHourInput] = useState(hour);
-  const [minuteInput, setMinuteInput] = useState(minute);
-
-  useEffect(() => {
-    setHourInput(hour);
-    setMinuteInput(minute);
-  }, [hour, minute]);
-
-  function commit() {
-    const nextHour = Math.min(23, Math.max(0, Number.parseInt(hourInput, 10) || 0));
-    const nextMinute = Math.min(59, Math.max(0, Number.parseInt(minuteInput, 10) || 0));
-    const nextValue = `${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`;
-    setHourInput(nextValue.slice(0, 2));
-    setMinuteInput(nextValue.slice(3));
-    onChange(nextValue);
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") {
-      event.currentTarget.blur();
-    } else if (event.key === "Escape") {
-      setHourInput(hour);
-      setMinuteInput(minute);
-      event.currentTarget.blur();
-    }
-  }
-
-  return (
-    <div className="min-w-0 flex-1 rounded-xl bg-black/20 px-3 py-2">
-      <div className="text-[10px] text-white/45">{label}</div>
-      <div className="mt-1 flex items-center gap-1">
-        <input
-          type="text"
-          inputMode="numeric"
-          maxLength={2}
-          value={hourInput}
-          aria-label={`${label}小时`}
-          onChange={(event) => setHourInput(event.target.value.replace(/\D/g, "").slice(0, 2))}
-          onBlur={commit}
-          onKeyDown={handleKeyDown}
-          onFocus={(event) => event.currentTarget.select()}
-          className="w-7 bg-transparent text-[13px] font-semibold tabular-nums text-white outline-none"
-        />
-        <span className="text-[13px] font-semibold text-white/45">:</span>
-        <input
-          type="text"
-          inputMode="numeric"
-          maxLength={2}
-          value={minuteInput}
-          aria-label={`${label}分钟`}
-          onChange={(event) => setMinuteInput(event.target.value.replace(/\D/g, "").slice(0, 2))}
-          onBlur={commit}
-          onKeyDown={handleKeyDown}
-          onFocus={(event) => event.currentTarget.select()}
-          className="w-7 bg-transparent text-[13px] font-semibold tabular-nums text-white outline-none"
-        />
-        <svg className="ml-auto h-4 w-4 text-white/55" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="8" cy="8" r="5.7" stroke="currentColor" strokeWidth="1.2" />
-          <path d="M8 4.7V8l2.2 1.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-        </svg>
-      </div>
-    </div>
-  );
-}
-
 export function WaterReminderPanel({
   settings,
   onChange,
@@ -93,6 +22,9 @@ export function WaterReminderPanel({
   nextReminderAt,
 }: Props) {
   const [intervalInput, setIntervalInput] = useState(() => String(settings.intervalMinutes));
+  const [timeTarget, setTimeTarget] = useState<"startTime" | "endTime" | null>(null);
+  const [durationInput, setDurationInput] = useState(String(settings.durationSeconds));
+  useEffect(() => setDurationInput(String(settings.durationSeconds)), [settings.durationSeconds]);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -132,7 +64,7 @@ export function WaterReminderPanel({
   }
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden px-5 py-4 text-white">
+    <div className="relative flex h-full w-full flex-col overflow-hidden px-5 py-4 text-white">
       <div className="mb-3 flex shrink-0 items-start justify-between gap-3">
         <div>
           <div className="text-[15px] font-semibold tracking-tight">喝水提醒</div>
@@ -185,17 +117,20 @@ export function WaterReminderPanel({
         <div className="rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
           <div className="mb-2 text-[12px] font-medium">提醒时间段</div>
           <div className="flex items-center gap-2">
-            <TimeField
-              label="开始时间"
-              value={settings.startTime}
-              onChange={(startTime) => onChange({ startTime })}
-            />
-            <span className="mt-4 text-white/30">→</span>
-            <TimeField
-              label="结束时间"
-              value={settings.endTime}
-              onChange={(endTime) => onChange({ endTime })}
-            />
+            {(["startTime", "endTime"] as const).map((field) => (
+              <button key={field} type="button" aria-haspopup="dialog"
+                onClick={() => setTimeTarget(field)}
+                className="min-w-0 flex-1 rounded-xl bg-black/20 px-3 py-2 text-left outline-none transition-colors hover:bg-cyan-400/10 focus-visible:ring-2 focus-visible:ring-cyan-200/50">
+                <span className="block text-[10px] text-white/45">{field === "startTime" ? "开始时间" : "结束时间"}</span>
+                <span className="mt-1 flex items-center justify-between text-[14px] font-semibold tabular-nums">
+                  {settings[field]}
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-cyan-200/65" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" />
+                    <path d="M8 4v4l2 1" stroke="currentColor" strokeLinecap="round" />
+                  </svg>
+                </span>
+              </button>
+            ))}
           </div>
           <div className="mt-2 text-[10px] text-white/35">
             结束时间早于开始时间时，会自动按跨午夜时段计算
@@ -251,10 +186,34 @@ export function WaterReminderPanel({
           </div>
         </div>
 
+
+        <div className="flex items-center justify-between gap-2 rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
+          <div>
+            <div className="text-[12px] font-medium">提醒持续时间</div>
+            <div className="mt-0.5 text-[10px] text-white/40">5–300 秒 · 到时关闭窗口和音效</div>
+            <div className="mt-0.5 text-[10px] text-white/30">修改后从下一次提醒生效</div>
+          </div>
+          <label className="flex shrink-0 items-center gap-2 rounded-xl bg-black/20 px-3 py-2">
+            <input type="number" min={5} max={300} step={1} aria-label="提醒持续时间（秒）"
+              value={durationInput}
+              onChange={(event) => setDurationInput(event.target.value)}
+              onBlur={() => {
+                const parsed = Number(durationInput);
+                const seconds = durationInput.trim() && Number.isFinite(parsed)
+                  ? Math.min(300, Math.max(5, Math.round(parsed))) : settings.durationSeconds;
+                setDurationInput(String(seconds));
+                onChange({ durationSeconds: seconds });
+              }}
+              onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+              className="w-10 bg-transparent text-center text-[13px] font-semibold tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-cyan-200/50" />
+            <span className="text-[10px] text-white/45">秒</span>
+          </label>
+        </div>
+
         <div className="flex items-center justify-between rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
           <div>
             <div className="text-[12px] font-medium">提醒音效</div>
-            <div className="mt-0.5 text-[10px] text-white/40">循环提示，确认或 30 秒超时后停止</div>
+            <div className="mt-0.5 text-[10px] text-white/40">循环提示，确认或 {settings.durationSeconds} 秒超时后停止</div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -319,10 +278,21 @@ export function WaterReminderPanel({
           />
         </div>
         <div className="mt-1 flex items-center justify-between text-[10px] text-white/30">
-          <span>支持 1–240 分钟 · 每次提醒保留 30 秒</span>
+          <span>支持 1–240 分钟 · 每次提醒保留 {settings.durationSeconds} 秒</span>
           <span className="text-cyan-300/70">💧 保持水分</span>
         </div>
       </div>
+      {timeTarget && (
+        <TimePicker
+          label={timeTarget === "startTime" ? "开始时间" : "结束时间"}
+          value={settings[timeTarget]}
+          onCancel={() => setTimeTarget(null)}
+          onConfirm={(value) => {
+            onChange({ [timeTarget]: value });
+            setTimeTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }

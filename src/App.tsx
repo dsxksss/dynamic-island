@@ -2,7 +2,7 @@ import { DynamicIsland } from "./components/DynamicIsland";
 import { useNotifications } from "./hooks/useNotifications";
 import { useWaterReminder } from "./hooks/useWaterReminder";
 import { playWaterReminderChime } from "./lib/sound";
-import { onWaterReminderTrayToggle } from "./lib/tauri";
+import { onWaterReminderTrayToggle, setWaterReminderTrayState } from "./lib/tauri";
 import { useEffect, useRef, useState } from "react";
 
 export default function App() {
@@ -23,6 +23,10 @@ export default function App() {
     });
     return () => unlisten?.();
   }, []);
+
+  useEffect(() => {
+    void setWaterReminderTrayState(waterReminder.settings.enabled).catch(console.error);
+  }, [waterReminder.settings.enabled]);
 
   return (
     <div className="flex min-h-screen w-full select-none items-start justify-center">

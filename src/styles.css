@@ -27,9 +27,33 @@ body {
   min-height: 100vh;
 }
 
-/* Hide scrollbars entirely — the overlay never scrolls. */
+/* Keep the compact overlay clean; settings opt into a visible scrollbar. */
 ::-webkit-scrollbar {
   display: none;
+}
+
+.water-settings-scroll {
+  scrollbar-gutter: stable;
+}
+
+.water-settings-scroll::-webkit-scrollbar {
+  display: block;
+  width: 6px;
+}
+
+.water-settings-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+.water-settings-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  min-height: 28px;
+}
+
+.water-settings-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.55);
 }
 
 /* Keep the interval field visually consistent with the rest of the pill. */

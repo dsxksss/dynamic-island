@@ -9,10 +9,15 @@ use tauri::{
     Emitter,
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Manager, WebviewWindow,
+    Manager, WebviewWindow, Wry,
 };
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use notifications::{ListenerStatus, Notification};
+
+#[derive(Clone)]
+struct WaterTrayItem(Arc<Mutex<Option<MenuItem<Wry>>>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -60,7 +65,7 @@ pub fn run() {
             let water_toggle_item = MenuItem::with_id(
                 app,
                 "water-toggle",
-                "喝水提醒：切换",
+                "喝水提醒：已关闭",
                 true,
                 None::<&str>,
             )?;
@@ -79,6 +84,9 @@ pub fn run() {
                 app,
                 &[&toggle_item, &water_toggle_item, &autostart_item, &quit_item],
             )?;
+            app.manage(WaterTrayItem(Arc::new(Mutex::new(Some(
+                water_toggle_item.clone(),
+            )))));
 
             // Clone the autostart menu item so we can update its text from the
             // toggle handler (MenuItem is cheaply cloneable, backed by an Arc).
@@ -143,6 +151,7 @@ pub fn run() {
             dismiss_notification,
             set_pill_rect_cmd,
             recenter_island,
+            set_water_tray_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -212,4 +221,16 @@ fn platform_info() -> serde_json::Value {
 #[tauri::command]
 fn dismiss_notification(id: String) -> String {
     id
+}
+
+/// Keep the tray label in sync with the setting controlled by the webview.
+#[tauri::command]
+fn set_water_tray_state(app: tauri::AppHandle, enabled: bool) {
+    if let Some(item) = app.state::<WaterTrayItem>().0.lock().as_ref() {
+        let _ = item.set_text(if enabled {
+            "喝水提醒：已开启"
+        } else {
+            "喝水提醒：已关闭"
+        });
+    }
 }

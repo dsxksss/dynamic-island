@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 
 import type { WaterReminderSettings } from "../lib/types";
 
@@ -9,6 +9,79 @@ interface Props {
   onTestSound: () => void;
   todayCount: number;
   nextReminderAt: number | null;
+}
+
+interface TimeFieldProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}
+
+function TimeField({ label, value, onChange }: TimeFieldProps) {
+  const [hour, minute] = value.split(":");
+  const [hourInput, setHourInput] = useState(hour);
+  const [minuteInput, setMinuteInput] = useState(minute);
+
+  useEffect(() => {
+    setHourInput(hour);
+    setMinuteInput(minute);
+  }, [hour, minute]);
+
+  function commit() {
+    const nextHour = Math.min(23, Math.max(0, Number.parseInt(hourInput, 10) || 0));
+    const nextMinute = Math.min(59, Math.max(0, Number.parseInt(minuteInput, 10) || 0));
+    const nextValue = `${String(nextHour).padStart(2, "0")}:${String(nextMinute).padStart(2, "0")}`;
+    setHourInput(nextValue.slice(0, 2));
+    setMinuteInput(nextValue.slice(3));
+    onChange(nextValue);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    } else if (event.key === "Escape") {
+      setHourInput(hour);
+      setMinuteInput(minute);
+      event.currentTarget.blur();
+    }
+  }
+
+  return (
+    <div className="min-w-0 flex-1 rounded-xl bg-black/20 px-3 py-2">
+      <div className="text-[10px] text-white/45">{label}</div>
+      <div className="mt-1 flex items-center gap-1">
+        <input
+          type="text"
+          inputMode="numeric"
+          maxLength={2}
+          value={hourInput}
+          aria-label={`${label}小时`}
+          onChange={(event) => setHourInput(event.target.value.replace(/\D/g, "").slice(0, 2))}
+          onBlur={commit}
+          onKeyDown={handleKeyDown}
+          onFocus={(event) => event.currentTarget.select()}
+          className="w-7 bg-transparent text-[13px] font-semibold tabular-nums text-white outline-none"
+        />
+        <span className="text-[13px] font-semibold text-white/45">:</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          maxLength={2}
+          value={minuteInput}
+          aria-label={`${label}分钟`}
+          onChange={(event) => setMinuteInput(event.target.value.replace(/\D/g, "").slice(0, 2))}
+          onBlur={commit}
+          onKeyDown={handleKeyDown}
+          onFocus={(event) => event.currentTarget.select()}
+          className="w-7 bg-transparent text-[13px] font-semibold tabular-nums text-white outline-none"
+        />
+        <svg className="ml-auto h-4 w-4 text-white/55" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="5.7" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M8 4.7V8l2.2 1.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+      </div>
+    </div>
+  );
 }
 
 export function WaterReminderPanel({
@@ -84,7 +157,7 @@ export function WaterReminderPanel({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
+      <div className="water-settings-scroll min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-2">
         <div className="flex items-center justify-between rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
           <div>
             <div className="text-[12px] font-medium">启用喝水提醒</div>
@@ -112,25 +185,17 @@ export function WaterReminderPanel({
         <div className="rounded-2xl bg-white/[0.07] px-3.5 py-3.5">
           <div className="mb-2 text-[12px] font-medium">提醒时间段</div>
           <div className="flex items-center gap-2">
-            <label className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl bg-black/20 px-3 py-2 text-[10px] text-white/45">
-              <span>开始时间</span>
-              <input
-                type="time"
-                value={settings.startTime}
-                onChange={(event) => onChange({ startTime: event.target.value })}
-                className="w-full bg-transparent text-[13px] font-semibold tabular-nums text-white outline-none [color-scheme:dark]"
-              />
-            </label>
+            <TimeField
+              label="开始时间"
+              value={settings.startTime}
+              onChange={(startTime) => onChange({ startTime })}
+            />
             <span className="mt-4 text-white/30">→</span>
-            <label className="flex min-w-0 flex-1 flex-col gap-1 rounded-xl bg-black/20 px-3 py-2 text-[10px] text-white/45">
-              <span>结束时间</span>
-              <input
-                type="time"
-                value={settings.endTime}
-                onChange={(event) => onChange({ endTime: event.target.value })}
-                className="w-full bg-transparent text-[13px] font-semibold tabular-nums text-white outline-none [color-scheme:dark]"
-              />
-            </label>
+            <TimeField
+              label="结束时间"
+              value={settings.endTime}
+              onChange={(endTime) => onChange({ endTime })}
+            />
           </div>
           <div className="mt-2 text-[10px] text-white/35">
             结束时间早于开始时间时，会自动按跨午夜时段计算

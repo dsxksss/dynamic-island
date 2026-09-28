@@ -85,6 +85,12 @@ export function onWaterReminderTrayToggle(
   return listen("island://water-reminder-toggle", () => cb());
 }
 
+/** Update the current enabled state shown in the system tray menu. */
+export async function setWaterReminderTrayState(enabled: boolean): Promise<void> {
+  if (!RUNNING_IN_TAURI) return;
+  await invoke("set_water_tray_state", { enabled });
+}
+
 /** Allow keyboard focus while the settings panel is open. */
 let focusUpdates: Promise<void> = Promise.resolve();
 export function setWindowFocusable(focusable: boolean): Promise<void> {

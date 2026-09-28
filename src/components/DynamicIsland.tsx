@@ -14,18 +14,33 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
-import { setClickThrough, setPillRect } from "../lib/tauri";
+import { setClickThrough, setPillRect, setWindowFocusable } from "../lib/tauri";
 import type { IslandMode } from "../lib/types";
 import { useIslandStore } from "../store/islandStore";
 import { IdlePill } from "./IdlePill";
 import { NotificationList } from "./NotificationList";
 import { NotificationView } from "./NotificationView";
+import { WaterReminderPanel } from "./WaterReminderPanel";
+import { WaterReminderView } from "./WaterReminderView";
+import type { WaterReminderSettings } from "../lib/types";
 
 const MORPH_SPRING = { type: "spring", stiffness: 380, damping: 30 } as const;
 const SLIDE_SPRING = { type: "spring", stiffness: 300, damping: 28 } as const;
 
 const WIN_W = 480;
 const WIN_H = 400;
+
+interface DynamicIslandProps {
+  waterReminder: WaterReminderSettings;
+  onWaterReminderChange: (patch: Partial<WaterReminderSettings>) => void;
+  settingsOpen: boolean;
+  onOpenSettings: () => void;
+  onCloseSettings: () => void;
+  onTestWaterSound: () => void;
+  onWaterReminderConfirmed: (id: string) => void;
+  todayWaterCount: number;
+  nextWaterReminderAt: number | null;
+}
 
 /** Pill geometry per mode.
  *  `card` = medium single-notification card. `expanded` = large list card. */
@@ -51,7 +66,17 @@ function pillGeometry(mode: IslandMode) {
  *  same top anchor (no vertical jump when morphing). */
 const PILL_TOP = 0;
 
-export function DynamicIsland() {
+export function DynamicIsland({
+  waterReminder,
+  onWaterReminderChange,
+  settingsOpen,
+  onOpenSettings,
+  onCloseSettings,
+  onTestWaterSound,
+  onWaterReminderConfirmed,
+  todayWaterCount,
+  nextWaterReminderAt,
+}: DynamicIslandProps) {
   const mode = useIslandStore((s) => s.mode);
   const setMode = useIslandStore((s) => s.setMode);
   const dismiss = useIslandStore((s) => s.dismiss);
@@ -62,15 +87,17 @@ export function DynamicIsland() {
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
-  const g = pillGeometry(mode);
+  const g = settingsOpen
+    ? { width: 432, height: 360, radius: 34 }
+    : pillGeometry(mode);
 
   // When the queue becomes empty (e.g. after dismissing the last notification),
   // collapse back to the hidden notch.
   useEffect(() => {
-    if (queue.length === 0 && (mode === "expanded" || mode === "card" || mode === "compact")) {
+    if (!settingsOpen && queue.length === 0 && (mode === "expanded" || mode === "card" || mode === "compact")) {
       setMode("hidden");
     }
-  }, [queue.length, mode, setMode]);
+  }, [queue.length, mode, setMode, settingsOpen]);
 
   // Click-through strategy. The OS window is 480×400 but mostly transparent.
   // Only the ACTUAL PILL should capture clicks; the transparent surround must
@@ -81,30 +108,41 @@ export function DynamicIsland() {
   //     directly over the pill (`overPill`, tracked by the backend watcher).
   //     Otherwise the transparent area would block the desktop.
   //   - hidden (notch): always click-through.
-  const interactive = mode === "expanded" || overPill;
+  const visible = settingsOpen || mode !== "hidden";
+  const interactive = settingsOpen || (visible && overPill);
   useEffect(() => {
-    void setClickThrough(!interactive);
+    void setClickThrough(!interactive).catch(console.error);
   }, [interactive]);
+
+  useEffect(() => {
+    void setWindowFocusable(settingsOpen).catch(console.error);
+    return () => { void setWindowFocusable(false).catch(console.error); };
+  }, [settingsOpen]);
 
   // Sync the pill's on-screen rect to the backend (for hit-testing while
   // click-through). Add a small padding so hover is forgiving at the edges,
   // especially when sliding in from the top.
   useEffect(() => {
-    const pad = 6;
-    const x = (WIN_W - g.width) / 2 - pad;
-    void setPillRect(x, Math.max(0, PILL_TOP - pad), g.width + pad * 2, g.height + pad * 2);
-  }, [g.width, g.height]);
+    // Never retain the large settings footprint after closing it.
+    useIslandStore.getState().setOverPill(false);
+    void setPillRect((WIN_W - g.width) / 2, PILL_TOP,
+      visible ? g.width : 0, visible ? g.height : 0).catch(console.error);
+  }, [g.width, g.height, visible, settingsOpen]);
 
   // Click: card -> expanded (open the full list); expanded -> card.
   function handleClick() {
+    if (settingsOpen) return;
     if (modeRef.current === "expanded") setMode("card");
+    else if (modeRef.current === "card" && queue[0]?.kind === "timer") return;
     else if (modeRef.current === "card" && queue.length > 0) setMode("expanded");
     else if (modeRef.current === "idle" && queue.length > 0) setMode("card");
+    else if (modeRef.current === "idle") onOpenSettings();
   }
   // DOM hover handlers are intentionally minimal — the backend cursor watcher
   // (onTopHover) is the single authority for show/hide to avoid feedback loops.
   // We only use mouseenter to eagerly open the card when hovering the idle pill.
   function handleEnter() {
+    if (settingsOpen) return;
     if (queue.length > 0 && modeRef.current === "idle") setMode("card");
   }
 
@@ -131,8 +169,8 @@ export function DynamicIsland() {
               width: g.width,
               height: g.height,
               borderRadius: g.radius,
-              opacity: mode === "hidden" ? 0 : 1,
-              y: mode === "hidden" ? -20 : 0,
+              opacity: !settingsOpen && mode === "hidden" ? 0 : 1,
+              y: !settingsOpen && mode === "hidden" ? -20 : 0,
             }}
             transition={MORPH_SPRING}
             style={{
@@ -145,7 +183,30 @@ export function DynamicIsland() {
             className="relative overflow-hidden ring-1 ring-white/10"
           >
             <AnimatePresence mode="popLayout" initial={false}>
-              {mode === "hidden" ? (
+              {settingsOpen ? (
+                <motion.div
+                  key="water-settings"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 8 }}
+                  transition={{ duration: 0.18 }}
+                  className="h-full w-full"
+                >
+                  <WaterReminderPanel
+                    settings={waterReminder}
+                    onChange={onWaterReminderChange}
+                    todayCount={todayWaterCount}
+                    nextReminderAt={nextWaterReminderAt}
+                    onClose={() => {
+                      void setClickThrough(true).catch(console.error);
+                      useIslandStore.getState().setOverPill(false);
+                      setMode("hidden");
+                      onCloseSettings();
+                    }}
+                    onTestSound={onTestWaterSound}
+                  />
+                </motion.div>
+              ) : mode === "hidden" ? (
                 <motion.div key="notch" className="h-full w-full" />
               ) : mode === "expanded" ? (
                 <motion.div
@@ -171,11 +232,22 @@ export function DynamicIsland() {
                   transition={{ duration: 0.15 }}
                   className="h-full w-full"
                 >
-                  <NotificationView
-                    n={queue[0]}
-                    expanded
-                    onDismiss={() => dismiss(queue[0].id)}
-                  />
+                  {queue[0].kind === "timer" ? (
+                    <WaterReminderView
+                      n={queue[0]}
+                      soundEnabled={waterReminder.soundEnabled}
+                      onConfirmed={() => {
+                        onWaterReminderConfirmed(queue[0].id);
+                        dismiss(queue[0].id);
+                      }}
+                    />
+                  ) : (
+                    <NotificationView
+                      n={queue[0]}
+                      expanded
+                      onDismiss={() => dismiss(queue[0].id)}
+                    />
+                  )}
                 </motion.div>
               ) : (
                 <motion.div
@@ -186,14 +258,15 @@ export function DynamicIsland() {
                   transition={{ duration: 0.15 }}
                   className="h-full w-full"
                 >
-                  <IdlePill />
+                  <IdlePill onOpenSettings={onOpenSettings} />
                 </motion.div>
               )}
             </AnimatePresence>
 
-            {/* Auto-close progress bar at the bottom. Visible on the medium
-                card, shrinks to zero over 5s, then the island hides. */}
-            {mode === "card" && (
+            {/* System notifications use a five-second auto-close countdown.
+                Keep it out of the settings surface, and never show it for
+                the water reminder card whose timeout is handled separately. */}
+            {!settingsOpen && mode === "card" && queue[0]?.kind === "generic" && (
               <motion.div
                 key="progress"
                 className="absolute bottom-0 left-3 right-3 h-[2px] overflow-hidden rounded-full bg-white/10"

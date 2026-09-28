@@ -25,6 +25,10 @@ const DEMO_APPS = [
 ];
 let demoSeq = 0;
 
+function waterReminderVisible() {
+  return useIslandStore.getState().queue[0]?.id.startsWith("water-") === true;
+}
+
 export function useNotifications(): void {
   const enqueue = useIslandStore((s) => s.enqueue);
   const setStatus = useIslandStore((s) => s.setStatus);
@@ -54,6 +58,7 @@ export function useNotifications(): void {
   function scheduleAutoCollapse() {
     clearCompact();
     compactTimer.current = window.setTimeout(() => {
+      if (waterReminderVisible()) return;
       // Auto-hide after the countdown — goes straight to hidden (slide away).
       // Only auto-collapses the medium card; the expanded list stays until the
       // user leaves.
@@ -65,6 +70,7 @@ export function useNotifications(): void {
   function scheduleAutoHide() {
     clearHide();
     hideTimer.current = window.setTimeout(() => {
+      if (waterReminderVisible()) return;
       // Hide whatever's showing (card/idle/compact). The expanded list also
       // hides after the delay if the cursor is genuinely gone.
       const m = modeRef.current;

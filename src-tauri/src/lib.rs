@@ -6,6 +6,7 @@ mod notifications;
 mod window_setup;
 
 use tauri::{
+    Emitter,
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Manager, WebviewWindow,
@@ -56,6 +57,13 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let water_toggle_item = MenuItem::with_id(
+                app,
+                "water-toggle",
+                "喝水提醒：切换",
+                true,
+                None::<&str>,
+            )?;
             let autostart_on = app
                 .state::<tauri_plugin_autostart::AutoLaunchManager>()
                 .is_enabled()
@@ -67,7 +75,10 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
-            let menu = Menu::with_items(app, &[&toggle_item, &autostart_item, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[&toggle_item, &water_toggle_item, &autostart_item, &quit_item],
+            )?;
 
             // Clone the autostart menu item so we can update its text from the
             // toggle handler (MenuItem is cheaply cloneable, backed by an Arc).
@@ -102,6 +113,9 @@ pub fn run() {
                         };
                         let _ = autostart_item_handle
                             .set_text(if now_on { "✓ 开机自启" } else { "开机自启" });
+                    }
+                    "water-toggle" => {
+                        let _ = app_handle.emit("island://water-reminder-toggle", ());
                     }
                     _ => {}
                 })

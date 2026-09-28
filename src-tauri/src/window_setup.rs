@@ -66,7 +66,7 @@ pub const EVT_TOP_HOVER: &str = "island://top-hover";
 /// in physical px internally.
 static PILL_RECT: parking_lot::Mutex<Option<PillRect>> = parking_lot::const_mutex(None);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct PillRect {
     x0: i32,
     y0: i32,
@@ -121,6 +121,7 @@ fn watch_loop(app: AppHandle) {
 
     let mut hovering = false;
     let mut over_pill = false;
+    let mut last_rect = None;
 
     loop {
         thread::sleep(POLL_INTERVAL);
@@ -146,14 +147,15 @@ fn watch_loop(app: AppHandle) {
             pt.y >= mon.y && pt.y <= mon.y + STRIP_HEIGHT_PX;
 
         // Pill footprint (from the frontend).
-        let now_over_pill = PILL_RECT
-            .lock()
-            .map(|r| pt.x >= r.x0 && pt.x <= r.x1 && pt.y >= r.y0 && pt.y <= r.y1)
+        let rect = *PILL_RECT.lock();
+        let now_over_pill = rect
+            .map(|r| pt.x >= r.x0 && pt.x < r.x1 && pt.y >= r.y0 && pt.y < r.y1)
             .unwrap_or(false);
         // silence unused on platforms without the lock helper
         let _ = &scale;
 
-        if now_hovering != hovering || now_over_pill != over_pill {
+        if now_hovering != hovering || now_over_pill != over_pill || rect != last_rect {
+            last_rect = rect;
             hovering = now_hovering;
             over_pill = now_over_pill;
             let _ = app.emit(

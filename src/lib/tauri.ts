@@ -67,7 +67,32 @@ export async function dismissNotification(id: string): Promise<void> {
 }
 
 /** Toggle whole-window click-through. */
-export async function setClickThrough(ignore: boolean): Promise<void> {
-  if (!RUNNING_IN_TAURI) return;
-  await getCurrentWindow().setIgnoreCursorEvents(ignore);
+let cursorUpdates: Promise<void> = Promise.resolve();
+export function setClickThrough(ignore: boolean): Promise<void> {
+  if (!RUNNING_IN_TAURI) return Promise.resolve();
+  // Serialize IPC so a late completion cannot restore stale interaction state.
+  cursorUpdates = cursorUpdates.catch(() => {}).then(() =>
+    getCurrentWindow().setIgnoreCursorEvents(ignore),
+  );
+  return cursorUpdates;
+}
+
+/** Subscribe to the water-reminder toggle from the system tray. */
+export function onWaterReminderTrayToggle(
+  cb: () => void,
+): Promise<UnlistenFn> {
+  if (!RUNNING_IN_TAURI) return Promise.resolve(() => {});
+  return listen("island://water-reminder-toggle", () => cb());
+}
+
+/** Allow keyboard focus while the settings panel is open. */
+let focusUpdates: Promise<void> = Promise.resolve();
+export function setWindowFocusable(focusable: boolean): Promise<void> {
+  if (!RUNNING_IN_TAURI) return Promise.resolve();
+  focusUpdates = focusUpdates.catch(() => {}).then(async () => {
+    const window = getCurrentWindow();
+    await window.setFocusable(focusable);
+    if (focusable) await window.setFocus();
+  });
+  return focusUpdates;
 }

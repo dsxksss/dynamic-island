@@ -2,6 +2,15 @@
 
 export type NotificationKind = "generic" | "music" | "timer";
 
+export interface WaterReminderSettings {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+  intervalMinutes: number;
+  soundEnabled: boolean;
+  fullscreenDnd: boolean;
+}
+
 export interface Notification {
   id: string;
   appName: string;

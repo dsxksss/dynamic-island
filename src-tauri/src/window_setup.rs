@@ -9,6 +9,65 @@ use tauri::{
 };
 
 const WINDOW_EDGE_MARGIN: u32 = 12;
+const SNAP_FLUSH_THRESHOLD: i32 = 16;
+
+#[cfg(windows)]
+fn work_area_for_window(window: &WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    use std::mem::size_of;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    let hwnd = window.hwnd().ok()?;
+    // Tauri currently exposes the native handle through a newer `windows`
+    // crate than the WinRT dependency used by this project. Re-wrap the raw
+    // handle so the GDI call receives this crate's HWND type.
+    let hwnd = windows::Win32::Foundation::HWND(hwnd.0);
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if monitor.0.is_null() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return None;
+    }
+    Some((
+        info.rcWork.left,
+        info.rcWork.top,
+        info.rcWork.right,
+        info.rcWork.bottom,
+    ))
+}
+
+#[cfg(windows)]
+fn work_area_for_point(x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
+    use std::mem::size_of;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    let monitor = unsafe { MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) };
+    if monitor.0.is_null() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return None;
+    }
+    Some((
+        info.rcWork.left,
+        info.rcWork.top,
+        info.rcWork.right,
+        info.rcWork.bottom,
+    ))
+}
 
 /// Position the island window flush at the very top-center of its current
 /// monitor (y = 0) and re-assert always-on-top. Called at startup and on
@@ -74,124 +133,266 @@ pub fn recenter(app: &AppHandle) {
 
 /// Restore a previously saved physical screen position while keeping the
 /// entire native window inside whichever monitor contains that position.
-pub fn restore_position(window: &WebviewWindow, saved_x: i32, saved_y: i32) {
+pub fn restore_position(window: &WebviewWindow, saved_x: i32, saved_y: i32, edge: &str, docked: bool) {
     let Ok(size) = window.outer_size() else {
         return;
     };
     let window_width = size.width as i32;
     let window_height = size.height as i32;
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let inner = window.inner_size().unwrap_or(size);
+    let pill_width = (150.0_f64.min(inner.width as f64 / scale - 16.0).max(1.0) * scale).round() as i32;
+    let pill_height = (38.0 * scale).round() as i32;
+    let outer = window.outer_position().unwrap_or_default();
+    let client = window.inner_position().unwrap_or(outer);
+    let offset_x = client.x - outer.x + match edge {
+        "left" => 0,
+        "right" => inner.width as i32 - pill_width,
+        _ => (inner.width as i32 - pill_width) / 2,
+    };
+    let offset_y = client.y - outer.y + match edge {
+        "top" => 0,
+        "bottom" => inner.height as i32 - pill_height,
+        _ => (inner.height as i32 - pill_height) / 2,
+    };
 
-    let mut bounds = None;
-    if let Ok(monitors) = window.available_monitors() {
-        for monitor in monitors {
-            let position = monitor.position();
-            let monitor_size = monitor.size();
-            let right = position.x + monitor_size.width as i32;
-            let bottom = position.y + monitor_size.height as i32;
-            if saved_x < right
-                && saved_x + window_width > position.x
-                && saved_y < bottom
-                && saved_y + window_height > position.y
-            {
-                bounds = Some((position.x, position.y, right, bottom));
-                break;
+    let mut bounds = {
+        #[cfg(windows)]
+        {
+            work_area_for_point(saved_x + offset_x + pill_width / 2, saved_y + offset_y + pill_height / 2)
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    };
+    if bounds.is_none() {
+        if let Ok(monitors) = window.available_monitors() {
+            for monitor in monitors {
+                let position = monitor.position();
+                let monitor_size = monitor.size();
+                let right = position.x + monitor_size.width as i32;
+                let bottom = position.y + monitor_size.height as i32;
+                if saved_x < right
+                    && saved_x + window_width > position.x
+                    && saved_y < bottom
+                    && saved_y + window_height > position.y
+                {
+                    bounds = Some((position.x, position.y, right, bottom));
+                    break;
+                }
             }
         }
     }
     if bounds.is_none() {
-        bounds = window.current_monitor().ok().flatten().map(|monitor| {
-            let position = monitor.position();
-            let size = monitor.size();
-            (
-                position.x,
-                position.y,
-                position.x + size.width as i32,
-                position.y + size.height as i32,
-            )
-        });
+        bounds = {
+            #[cfg(windows)]
+            {
+                work_area_for_window(window)
+            }
+            #[cfg(not(windows))]
+            {
+                window.current_monitor().ok().flatten().map(|monitor| {
+                    let position = monitor.position();
+                    let size = monitor.size();
+                    (
+                        position.x,
+                        position.y,
+                        position.x + size.width as i32,
+                        position.y + size.height as i32,
+                    )
+                })
+            }
+        };
     }
     let Some((left, top, right, bottom)) = bounds else {
         return;
     };
 
-    let x = saved_x.clamp(left, (right - window_width).max(left));
-    let y = saved_y.clamp(top, (bottom - window_height).max(top));
+    let (x, y) = if docked {
+        (saved_x.clamp(left, (right - window_width).max(left)),
+         saved_y.clamp(top, (bottom - window_height).max(top)))
+    } else {
+        // A free pill may be fully visible even when its transparent host is
+        // partly outside the monitor. Preserve that exact position on restart.
+        ((saved_x + offset_x).clamp(left, (right - pill_width).max(left)) - offset_x,
+         (saved_y + offset_y).clamp(top, (bottom - pill_height).max(top)) - offset_y)
+    };
     let _ = window.set_position(PhysicalPosition::new(x, y));
     let _ = window.set_always_on_top(true);
     let _ = window.set_skip_taskbar(true);
 }
 
-/// Snap a freely dragged island to whichever edge of its current monitor is
-/// closest. The returned edge drives the frontend's direction-aware reveal
-/// animation.
-pub fn snap_to_nearest_edge(window: &WebviewWindow) -> &'static str {
+#[derive(serde::Deserialize)]
+pub struct DragPillRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+fn magnetic_edge(pill: (i32, i32, i32, i32), bounds: (i32, i32, i32, i32)) -> Option<&'static str> {
+    let distances = [
+        ("top", (pill.1 - bounds.1).abs()),
+        ("right", (bounds.2 - pill.2).abs()),
+        ("bottom", (bounds.3 - pill.3).abs()),
+        ("left", (pill.0 - bounds.0).abs()),
+    ];
+    distances.into_iter().min_by_key(|(_, distance)| *distance)
+        .filter(|(_, distance)| *distance <= SNAP_FLUSH_THRESHOLD)
+        .map(|(edge, _)| edge)
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::magnetic_edge;
+
+    #[test]
+    fn free_drop_does_not_snap_to_nearest_edge() {
+        assert_eq!(magnetic_edge((600, 400, 750, 438), (0, 0, 1920, 1040)), None);
+        assert_eq!(magnetic_edge((17, 400, 167, 438), (0, 0, 1920, 1040)), None);
+    }
+
+    #[test]
+    fn only_visible_pill_within_threshold_snaps() {
+        let bounds = (0, 0, 1920, 1040);
+        assert_eq!(magnetic_edge((16, 400, 166, 438), bounds), Some("left"));
+        assert_eq!(magnetic_edge((1760, 400, 1910, 438), bounds), Some("right"));
+        assert_eq!(magnetic_edge((600, 10, 750, 48), bounds), Some("top"));
+    }
+
+    #[test]
+    fn bottom_snap_uses_taskbar_work_area() {
+        assert_eq!(magnetic_edge((600, 993, 750, 1031), (0, 0, 1920, 1040)), Some("bottom"));
+    }
+
+    #[test]
+    fn negative_monitor_coordinates_are_supported() {
+        assert_eq!(magnetic_edge((-1910, 400, -1760, 438), (-1920, 0, 0, 1040)), Some("left"));
+        assert_eq!(magnetic_edge((-900, 400, -750, 438), (-1920, 0, 0, 1040)), None);
+    }
+}
+
+/// Keep the released position unless the visible pill is close to an edge.
+/// The transparent host window must never cause premature snapping.
+pub fn snap_to_nearest_edge(window: &WebviewWindow, previous_edge: String, pill: DragPillRect) -> (String, bool) {
     let (Ok(Some(monitor)), Ok(position), Ok(size)) = (
         window.current_monitor(),
         window.outer_position(),
         window.outer_size(),
     ) else {
-        return "top";
+        return (previous_edge, false);
     };
 
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
     let window_width = size.width as i32;
     let window_height = size.height as i32;
-    let monitor_right = monitor_position.x + monitor_size.width as i32;
-    let monitor_bottom = monitor_position.y + monitor_size.height as i32;
-    let max_x = (monitor_right - window_width).max(monitor_position.x);
-    let max_y = (monitor_bottom - window_height).max(monitor_position.y);
-    let clamp_x = |value: i32| value.clamp(monitor_position.x, max_x);
-    let clamp_y = |value: i32| value.clamp(monitor_position.y, max_y);
-
-    let distances = [
-        ("top", (position.y - monitor_position.y).abs()),
-        (
-            "right",
-            (monitor_right - (position.x + window_width)).abs(),
-        ),
-        (
-            "bottom",
-            (monitor_bottom - (position.y + window_height)).abs(),
-        ),
-        ("left", (position.x - monitor_position.x).abs()),
-    ];
-    let edge = distances
-        .into_iter()
-        .min_by_key(|(_, distance)| *distance)
-        .map(|(edge, _)| edge)
-        .unwrap_or("top");
+    let full_bounds = (
+        monitor_position.x,
+        monitor_position.y,
+        monitor_position.x + monitor_size.width as i32,
+        monitor_position.y + monitor_size.height as i32,
+    );
+    let (monitor_left, monitor_top, monitor_right, monitor_bottom) = {
+        #[cfg(windows)]
+        {
+            work_area_for_window(window).unwrap_or(full_bounds)
+        }
+        #[cfg(not(windows))]
+        {
+            full_bounds
+        }
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let client = window.inner_position().unwrap_or(position);
+    let client_size = window.inner_size().unwrap_or(size);
+    let px = |value: f64| (value * scale).round() as i32;
+    let pill_x = client.x + px(pill.x);
+    let pill_y = client.y + px(pill.y);
+    let pill_width = px(pill.width);
+    let pill_height = px(pill.height);
+    let Some(edge) = magnetic_edge(
+        (pill_x, pill_y, pill_x + pill_width, pill_y + pill_height),
+        (monitor_left, monitor_top, monitor_right, monitor_bottom),
+    ) else {
+        // Do not reposition or change the layout anchor on a free drop.
+        return (previous_edge, false);
+    };
+    let left_anchor = monitor_left;
+    let top_anchor = monitor_top;
+    let right_anchor = (monitor_right - window_width).max(left_anchor);
+    let bottom_anchor = (monitor_bottom - window_height).max(top_anchor);
+    let clamp_x = |value: i32| value.clamp(left_anchor, right_anchor);
+    let clamp_y = |value: i32| value.clamp(top_anchor, bottom_anchor);
+    // Compensate for the new pill alignment inside the transparent window so
+    // snapping does not also jump along the edge.
+    let centered_x = pill_x - (client_size.width as i32 - pill_width) / 2 - (client.x - position.x);
+    let centered_y = pill_y - (client_size.height as i32 - pill_height) / 2 - (client.y - position.y);
 
     let (x, y) = match edge {
-        "right" => (max_x, clamp_y(position.y)),
-        "bottom" => (clamp_x(position.x), max_y),
-        "left" => (monitor_position.x, clamp_y(position.y)),
-        _ => (clamp_x(position.x), monitor_position.y),
+        "right" => (right_anchor, clamp_y(centered_y)),
+        "bottom" => (clamp_x(centered_x), bottom_anchor),
+        "left" => (left_anchor, clamp_y(centered_y)),
+        _ => (clamp_x(centered_x), top_anchor),
     };
     let _ = window.set_position(PhysicalPosition::new(x, y));
     let _ = window.set_always_on_top(true);
     let _ = window.set_skip_taskbar(true);
-    edge
+    (edge.to_string(), true)
 }
 
 /// The event name emitted by the cursor watcher describing where the pointer is
-/// relative to the island. `hovering` = inside the top-edge summon zone;
+/// relative to the island. `hovering` = inside the monitor-edge summon zone;
 /// `overPill` = directly over the visible pill footprint.
 pub const EVT_TOP_HOVER: &str = "island://top-hover";
 pub const EVT_DRAG_RELEASED: &str = "island://drag-released";
 
 static NATIVE_DRAGGING: AtomicBool = AtomicBool::new(false);
+static INTERACTION_LOCKED: AtomicBool = AtomicBool::new(false);
+static INTERACTION_REFRESH: AtomicBool = AtomicBool::new(false);
+
+pub fn set_interaction_lock(window: &WebviewWindow, active: bool) -> tauri::Result<()> {
+    INTERACTION_LOCKED.store(active, Ordering::Release);
+    INTERACTION_REFRESH.store(true, Ordering::Release);
+    if active {
+        // Make the window interactive before handing capture to native drag.
+        window.set_ignore_cursor_events(false)?;
+    }
+    // Unlocking is resolved by the watcher using the latest native position.
+    Ok(())
+}
 
 /// Mark whether the native window drag is active. The cursor watcher uses this
 /// to detect the global mouse-button release that WebView may not receive.
 pub fn set_native_dragging(active: bool) {
     NATIVE_DRAGGING.store(active, Ordering::Release);
+    INTERACTION_REFRESH.store(true, Ordering::Release);
 }
 
-/// The current pill footprint (logical px, screen-relative to the window's
-/// top-left). Set by the frontend so the cursor watcher can hit-test it. Stored
-/// in physical px internally.
-static PILL_RECT: parking_lot::Mutex<Option<PillRect>> = parking_lot::const_mutex(None);
+/// Store client-relative logical coordinates. Screen coordinates are computed
+/// on each poll so native movement/DPI changes never leave a stale hit target.
+static PILL_RECT: parking_lot::Mutex<Option<LogicalPillRect>> = parking_lot::const_mutex(None);
+
+#[derive(Clone, Copy)]
+struct LogicalPillRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl LogicalPillRect {
+    fn on_screen(self, origin: PhysicalPosition<i32>, scale: f64) -> PillRect {
+        let px = |value: f64| (value * scale).round() as i32;
+        PillRect {
+            x0: origin.x + px(self.x),
+            y0: origin.y + px(self.y),
+            x1: origin.x + px(self.x + self.width),
+            y1: origin.y + px(self.y + self.height),
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 struct PillRect {
@@ -201,27 +402,23 @@ struct PillRect {
     y1: i32,
 }
 
+impl PillRect {
+    fn contains(self, x: i32, y: i32) -> bool {
+        x >= self.x0 && x < self.x1 && y >= self.y0 && y < self.y1
+    }
+}
+
+fn should_ignore_cursor(over_pill: bool, locked: bool, dragging: bool) -> bool {
+    !(over_pill || locked || dragging)
+}
+
 /// Called from the frontend (via a command) to tell the backend where the pill
 /// currently is on screen, so the cursor watcher can detect "cursor over pill"
 /// even while the window is click-through. `x/y/w/h` are LOGICAL px relative to
 /// the window's top-left corner.
-pub fn set_pill_rect(window: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
-    // Use the WebView's client origin rather than the decorated outer origin.
-    // After a native drag Windows can retain a few physical pixels of invisible
-    // resize border; using outer_position then makes the whole pill miss the
-    // cursor hit-test rectangle.
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let Ok(win_pos) = window.inner_position().or_else(|_| window.outer_position()) else {
-        return;
-    };
-    let px = |v: f64| (v * scale).round() as i32;
-    let rect = PillRect {
-        x0: win_pos.x + px(x),
-        y0: win_pos.y + px(y),
-        x1: win_pos.x + px(x + w),
-        y1: win_pos.y + px(y + h),
-    };
-    *PILL_RECT.lock() = Some(rect);
+pub fn set_pill_rect(_window: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
+    *PILL_RECT.lock() = Some(LogicalPillRect { x, y, width: w, height: h });
+    INTERACTION_REFRESH.store(true, Ordering::Release);
 }
 
 /// Start a background thread that polls the global cursor position and emits a
@@ -243,13 +440,16 @@ fn watch_loop(app: AppHandle) {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
-    // Summon zone: a thin strip at the very top of the screen.
+    // Summon zone: a thin strip around every edge of the current monitor.
     const STRIP_HEIGHT_PX: i32 = 6;
     const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
     let mut hovering = false;
     let mut over_pill = false;
     let mut last_rect = None;
+    let mut last_ignore = None;
+    let mut was_button_down = false;
+    let mut pressed_on_pill = false;
 
     loop {
         thread::sleep(POLL_INTERVAL);
@@ -266,9 +466,9 @@ fn watch_loop(app: AppHandle) {
         // Native dragging captures the pointer outside WebView, so pointerup
         // often never reaches React. Poll the global left-button state and
         // emit an explicit release event instead.
-        if NATIVE_DRAGGING.load(Ordering::Acquire)
-            && unsafe { GetAsyncKeyState(0x01) } >= 0
-        {
+        let button_down = unsafe { GetAsyncKeyState(0x01) } < 0;
+        let released_drag = NATIVE_DRAGGING.load(Ordering::Acquire) && !button_down;
+        if released_drag {
             NATIVE_DRAGGING.store(false, Ordering::Release);
             let _ = app.emit(EVT_DRAG_RELEASED, ());
         }
@@ -277,22 +477,53 @@ fn watch_loop(app: AppHandle) {
             continue;
         };
         let mon = monitor.position();
-        let _mon_size = monitor.size();
-        let scale = monitor.scale_factor();
+        let mon_size = monitor.size();
 
-        // Summon zone spans the full width at the very top (forgiving).
-        let now_hovering =
-            pt.y >= mon.y && pt.y <= mon.y + STRIP_HEIGHT_PX;
+        // Summon zones span all four monitor edges. This lets an island that
+        // was snapped left, right, or bottom be revealed without returning to
+        // the top edge first.
+        let full_bounds = (
+            mon.x,
+            mon.y,
+            mon.x + mon_size.width as i32,
+            mon.y + mon_size.height as i32,
+        );
+        let (left, top, right, bottom) = work_area_for_window(&window).unwrap_or(full_bounds);
+        let now_hovering = pt.x >= left && pt.x <= left + STRIP_HEIGHT_PX
+            || pt.x >= right - STRIP_HEIGHT_PX && pt.x <= right
+            || pt.y >= top && pt.y <= top + STRIP_HEIGHT_PX
+            || pt.y >= bottom - STRIP_HEIGHT_PX && pt.y <= bottom;
 
-        // Pill footprint (from the frontend).
-        let rect = *PILL_RECT.lock();
+        let Ok(origin) = window.inner_position().or_else(|_| window.outer_position()) else {
+            continue;
+        };
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let rect = (*PILL_RECT.lock()).map(|r| r.on_screen(origin, scale));
         let now_over_pill = rect
-            .map(|r| pt.x >= r.x0 && pt.x < r.x1 && pt.y >= r.y0 && pt.y < r.y1)
+            .map(|r| r.contains(pt.x, pt.y))
             .unwrap_or(false);
-        // silence unused on platforms without the lock helper
-        let _ = &scale;
+        let released_button = was_button_down && !button_down;
+        if !button_down {
+            pressed_on_pill = false;
+        } else if !was_button_down && now_over_pill {
+            pressed_on_pill = true;
+        }
+        was_button_down = button_down;
+        let ignore = should_ignore_cursor(
+            now_over_pill,
+            INTERACTION_LOCKED.load(Ordering::Acquire) || pressed_on_pill,
+            NATIVE_DRAGGING.load(Ordering::Acquire),
+        );
+        // One owner controls WS_EX_TRANSPARENT. Reassert after native capture
+        // ends even if hover is unchanged, then enable the next drag normally.
+        let refresh = INTERACTION_REFRESH.swap(false, Ordering::AcqRel);
+        if last_ignore != Some(ignore) || released_drag || released_button || refresh || rect != last_rect {
+            if window.set_ignore_cursor_events(ignore).is_ok() {
+                last_ignore = Some(ignore);
+            }
+        }
 
-        if now_hovering != hovering || now_over_pill != over_pill || rect != last_rect {
+        if refresh || now_hovering != hovering || now_over_pill != over_pill || rect != last_rect {
             last_rect = rect;
             hovering = now_hovering;
             over_pill = now_over_pill;
@@ -304,6 +535,47 @@ fn watch_loop(app: AppHandle) {
                 }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod hit_test_tests {
+    use super::*;
+
+    #[test]
+    fn hit_target_follows_two_moves_without_frontend_move_events() {
+        let logical = LogicalPillRect { x: 165.0, y: 0.0, width: 150.0, height: 38.0 };
+        let first = logical.on_screen(PhysicalPosition::new(100, 100), 1.0);
+        let second = logical.on_screen(PhysicalPosition::new(700, 400), 1.0);
+        let third = logical.on_screen(PhysicalPosition::new(300, 600), 1.0);
+        assert!(first.contains(280, 110));
+        assert!(!second.contains(280, 110));
+        assert!(second.contains(880, 410));
+        assert!(third.contains(480, 610));
+    }
+
+    #[test]
+    fn hit_target_uses_current_dpi_and_negative_monitor_origin() {
+        let logical = LogicalPillRect { x: 165.0, y: 0.0, width: 150.0, height: 38.0 };
+        let rect = logical.on_screen(PhysicalPosition::new(-1000, 200), 1.5);
+        assert!(rect.contains(-740, 220));
+        assert!(!rect.contains(-760, 220));
+    }
+
+    #[test]
+    fn release_over_pill_stays_interactive_for_next_drag() {
+        assert!(!should_ignore_cursor(false, false, true));
+        assert!(!should_ignore_cursor(true, false, false));
+        assert!(!should_ignore_cursor(true, true, true));
+        assert!(should_ignore_cursor(false, false, false));
+    }
+
+    #[test]
+    fn hidden_pill_and_closed_settings_do_not_keep_large_hit_target() {
+        let hidden = LogicalPillRect { x: 165.0, y: 0.0, width: 0.0, height: 0.0 };
+        assert!(!hidden.on_screen(PhysicalPosition::new(0, 0), 1.0).contains(165, 0));
+        let idle = LogicalPillRect { x: 165.0, y: 0.0, width: 150.0, height: 38.0 };
+        assert!(!idle.on_screen(PhysicalPosition::new(0, 0), 1.0).contains(250, 200));
     }
 }
 

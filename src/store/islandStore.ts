@@ -8,6 +8,10 @@ interface IslandState {
   /** Newest first. The top of the queue is what the island shows. */
   queue: Notification[];
   mode: IslandMode;
+  dragging: boolean;
+  docked: boolean;
+  setDragging: (dragging: boolean) => void;
+  setDocked: (docked: boolean) => void;
   /** Whether the cursor is directly over the pill (from backend watcher). Used
    *  to selectively disable click-through so the pill is clickable in idle. */
   overPill: boolean;
@@ -35,6 +39,10 @@ const MAX_QUEUE = 20;
 export const useIslandStore = create<IslandState>((set, get) => ({
   queue: [],
   mode: "idle",
+  dragging: false,
+  docked: true,
+  setDragging: (dragging) => set((s) => ({ dragging, mode: dragging && s.mode === "hidden" ? "idle" : s.mode })),
+  setDocked: (docked) => set((s) => ({ docked, mode: !docked && s.mode === "hidden" ? "idle" : s.mode })),
   overPill: false,
   filterText: "",
   status: null,
@@ -57,9 +65,15 @@ export const useIslandStore = create<IslandState>((set, get) => ({
   },
   dismiss: (id) =>
     set((s) => ({ queue: s.queue.filter((x) => x.id !== id) })),
-  clearAll: () => set({ queue: [], mode: "hidden" }),
+  clearAll: () => {
+    set({ queue: [] });
+    get().setMode("hidden");
+  },
 
-  setMode: (m) => set({ mode: m }),
+  setMode: (m) => set((s) => ({
+    // Timers already queued before dragging must not hide the pill either.
+    mode: m === "hidden" ? (s.dragging ? s.mode : s.docked ? "hidden" : "idle") : m,
+  })),
   setOverPill: (v) => set({ overPill: v }),
   setFilterText: (t) => set({ filterText: t }),
   setStatus: (s) => set({ status: s, demo: s.available === false }),

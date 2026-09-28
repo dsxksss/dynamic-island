@@ -27,6 +27,7 @@ export function useNotifications(systemNotificationsEnabled: boolean): void {
   const setMode = useIslandStore((s) => s.setMode);
   const setOverPill = useIslandStore((s) => s.setOverPill);
   const mode = useIslandStore((s) => s.mode);
+  const dragging = useIslandStore((s) => s.dragging);
 
   const compactTimer = useRef<number | null>(null);
   const modeRef = useRef(mode);
@@ -42,8 +43,9 @@ export function useNotifications(systemNotificationsEnabled: boolean): void {
   }
   function scheduleAutoCollapse() {
     clearCompact();
+    if (useIslandStore.getState().dragging) return;
     compactTimer.current = window.setTimeout(() => {
-      if (waterReminderVisible()) return;
+      if (waterReminderVisible() || useIslandStore.getState().dragging) return;
       // Auto-hide after the countdown — goes straight to hidden (slide away).
       // Only auto-collapses the medium card; the expanded list stays until the
       // user leaves.
@@ -87,11 +89,14 @@ export function useNotifications(systemNotificationsEnabled: boolean): void {
   // --- re-schedule auto-collapse when re-entering compact (e.g. after the
   //     user leaves an expanded view) so the progress bar restarts ----------
   useEffect(() => {
+    clearCompact();
+    if (dragging) return;
     if (mode === "card" || mode === "compact") {
       scheduleAutoCollapse();
     }
+    return clearCompact;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, dragging]);
 
   // --- notification polling -------------------------------------------------
   useEffect(() => {
@@ -160,15 +165,22 @@ export function useNotifications(systemNotificationsEnabled: boolean): void {
 
   // --- top hover / over-pill events ----------------------------------------
   useEffect(() => {
-    const unlisteners: Array<() => void> = [];
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
     onTopHover(({ hovering, overPill }) => {
       setOverPill(overPill);
       if (hovering) {
         // Cursor in the top summon zone — reveal (if hidden) and stay.
         if (modeRef.current === "hidden") setMode("idle");
       }
-    }).then((u) => unlisteners.push(u));
-    return () => unlisteners.forEach((u) => u());
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setMode, setOverPill]);
 }

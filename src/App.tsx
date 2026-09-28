@@ -74,7 +74,7 @@ export default function App() {
       void recenterIsland().catch(console.error);
     } else {
       const saved = readSavedIslandPosition();
-      if (saved) void restoreIslandPosition(saved.x, saved.y).catch(console.error);
+      if (saved) void restoreIslandPosition(saved).catch(console.error);
     }
   }, [fixedPosition]);
 

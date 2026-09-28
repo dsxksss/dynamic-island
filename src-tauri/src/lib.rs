@@ -162,6 +162,7 @@ pub fn run() {
             snap_island,
             restore_island_position,
             set_drag_tracking,
+            set_interaction_lock,
             set_water_tray_state,
         ])
         .run(tauri::generate_context!())
@@ -224,25 +225,28 @@ fn recenter_island(app: tauri::AppHandle) {
 #[derive(serde::Serialize)]
 struct SnapIslandResult {
     edge: String,
+    docked: bool,
     x: i32,
     y: i32,
 }
 
 #[tauri::command]
-fn snap_island(app: tauri::AppHandle) -> SnapIslandResult {
+fn snap_island(app: tauri::AppHandle, edge: String, pill: window_setup::DragPillRect) -> SnapIslandResult {
     let Some(window) = app.get_webview_window("island") else {
         return SnapIslandResult {
             edge: "top".into(),
+            docked: false,
             x: 0,
             y: 0,
         };
     };
-    let edge = window_setup::snap_to_nearest_edge(&window).to_string();
+    let (edge, docked) = window_setup::snap_to_nearest_edge(&window, edge, pill);
     let position = window
         .outer_position()
         .unwrap_or(tauri::PhysicalPosition::new(0, 0));
     SnapIslandResult {
         edge,
+        docked,
         x: position.x,
         y: position.y,
     }
@@ -250,9 +254,9 @@ fn snap_island(app: tauri::AppHandle) -> SnapIslandResult {
 
 /// Restore a saved physical screen position from the frontend.
 #[tauri::command]
-fn restore_island_position(app: tauri::AppHandle, x: i32, y: i32) {
+fn restore_island_position(app: tauri::AppHandle, x: i32, y: i32, edge: String, docked: bool) {
     if let Some(window) = app.get_webview_window("island") {
-        window_setup::restore_position(&window, x, y);
+        window_setup::restore_position(&window, x, y, &edge, docked);
     }
 }
 
@@ -262,6 +266,12 @@ fn restore_island_position(app: tauri::AppHandle, x: i32, y: i32) {
 #[tauri::command]
 fn set_drag_tracking(active: bool) {
     window_setup::set_native_dragging(active);
+}
+
+#[tauri::command]
+fn set_interaction_lock(app: tauri::AppHandle, active: bool) -> Result<(), String> {
+    let window = app.get_webview_window("island").ok_or("Island window is unavailable")?;
+    window_setup::set_interaction_lock(&window, active).map_err(|error| error.to_string())
 }
 
 /// Basic platform/identity info.

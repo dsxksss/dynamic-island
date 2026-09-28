@@ -15,6 +15,7 @@ interface Props {
 
 export function IdlePill({ onOpenSettings }: Props) {
   const [now, setNow] = useState(() => new Date());
+  const time = formatTime(now);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 10_000);
@@ -29,9 +30,7 @@ export function IdlePill({ onOpenSettings }: Props) {
         animate={{ scale: [1, 1.25, 1], opacity: [0.7, 1, 0.7] }}
         transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
       />
-      <span className="text-[13px] font-medium tabular-nums text-white/90">
-        {formatTime(now)}
-      </span>
+      <span className="text-[13px] font-medium tabular-nums text-white/90">{time}</span>
       {onOpenSettings && (
         <button
           type="button"

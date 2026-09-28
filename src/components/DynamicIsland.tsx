@@ -15,7 +15,7 @@ import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { AnimatePresence, motion } from "motion/react";
 
 import {
-  setClickThrough,
+  setInteractionLock,
   onIslandMoved,
   setPillRect,
   setWindowFocusable,
@@ -128,8 +128,11 @@ export function DynamicIsland({
   const [snapEdge, setSnapEdge] = useState<SnapEdge>(
     () => readSavedIslandPosition()?.edge ?? "top",
   );
-  const [positionRevision, setPositionRevision] = useState(0);
-  const [dragging, setDragging] = useState(false);
+  const dragging = useIslandStore((s) => s.dragging);
+  const setDragging = useIslandStore((s) => s.setDragging);
+  const docked = useIslandStore((s) => s.docked);
+  const setDocked = useIslandStore((s) => s.setDocked);
+  const dragPlacementRef = useRef<{ edge: SnapEdge; pill: { x: number; y: number; width: number; height: number } } | null>(null);
   const pendingDragRef = useRef<{ x: number; y: number } | null>(null);
   const draggingRef = useRef(false);
   const suppressClickRef = useRef(false);
@@ -139,7 +142,8 @@ export function DynamicIsland({
 
   useEffect(() => {
     setSnapEdge(fixedPosition ? "top" : (readSavedIslandPosition()?.edge ?? "top"));
-  }, [fixedPosition]);
+    setDocked(fixedPosition || (readSavedIslandPosition()?.docked ?? false));
+  }, [fixedPosition, setDocked]);
 
   const g = settingsOpen
     ? { width: Math.max(1, Math.min(432, layoutWidth - 16)), height: 360, radius: 34 }
@@ -153,26 +157,36 @@ export function DynamicIsland({
     void setNativeDragTracking(false).catch(console.error);
     if (!draggingRef.current) return;
     draggingRef.current = false;
-    setDragging(false);
+    const placement = dragPlacementRef.current;
+    dragPlacementRef.current = null;
     suppressClickRef.current = true;
     window.setTimeout(() => {
       suppressClickRef.current = false;
     }, 250);
-    void snapWindowToNearestEdge()
+    if (!placement) {
+      setDragging(false);
+      return;
+    }
+    // Keep hiding suspended until the final native position has been saved.
+    void snapWindowToNearestEdge(placement.edge, placement.pill)
       .then((position) => {
-        // The dragged window can move along the same edge. In that case the
-        // edge value does not change, so force the hit-test rectangle to sync
-        // with the new native window position as well.
+        // Rust follows the native origin directly; only layout changes need
+        // a new client-relative rectangle from React.
         saveIslandPosition(position);
+        setDocked(position.docked);
         setSnapEdge(position.edge);
-        setPositionRevision((revision) => revision + 1);
       })
-      .catch((error) => console.error("Failed to snap the island window", error));
+      .catch((error) => {
+        setDocked(false);
+        console.error("Failed to finish positioning the island window", error);
+      })
+      .finally(() => setDragging(false));
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     if (
       fixedPosition ||
+      dragging ||
       settingsOpen ||
       mode === "expanded" ||
       (mode === "card" && queue[0]?.kind === "timer") ||
@@ -194,10 +208,19 @@ export function DynamicIsland({
 
     pendingDragRef.current = null;
     draggingRef.current = true;
+    dragPlacementRef.current = {
+      edge: snapEdge,
+      pill: {
+        x: snapEdge === "left" ? 0 : snapEdge === "right" ? layoutWidth - g.width : (layoutWidth - g.width) / 2,
+        y: snapEdge === "bottom" ? layoutHeight - g.height : snapEdge === "top" ? PILL_TOP : (layoutHeight - g.height) / 2,
+        width: g.width,
+        height: g.height,
+      },
+    };
     setDragging(true);
-    void setClickThrough(false).catch(console.error);
-    void setNativeDragTracking(true)
-      .then(() => startWindowDragging())
+    void setInteractionLock(true)
+      .then(() => draggingRef.current ? setNativeDragTracking(true) : undefined)
+      .then(() => draggingRef.current ? startWindowDragging() : undefined)
       .catch((error) => {
         console.error("Failed to start dragging the island window", error);
         finishWindowDrag();
@@ -206,15 +229,21 @@ export function DynamicIsland({
 
   useEffect(() => {
     const finish = () => finishWindowDrag();
+    // Windows may cancel WebView pointer capture when native dragging STARTS.
+    // Only global button release (or pointerup) ends an active native drag.
+    const cancel = () => { pendingDragRef.current = null; };
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
+    window.addEventListener("pointercancel", cancel);
     onDragReleased(finish).then((cleanup) => {
-      unlisten = cleanup;
+      if (disposed) cleanup();
+      else unlisten = cleanup;
     });
     return () => {
+      disposed = true;
       window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("pointercancel", cancel);
       unlisten?.();
     };
   }, []);
@@ -223,15 +252,20 @@ export function DynamicIsland({
   // actual position from move events instead of treating that blur as release.
   useEffect(() => {
     if (fixedPosition) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     onIslandMoved(({ x, y }) => {
       const saved = readSavedIslandPosition();
-      saveIslandPosition({ edge: saved?.edge ?? snapEdge, x, y });
-      setPositionRevision((revision) => revision + 1);
+      const state = useIslandStore.getState();
+      saveIslandPosition({ edge: saved?.edge ?? snapEdge, docked: !state.dragging && (saved?.docked ?? state.docked), x, y });
     }).then((cleanup) => {
-      unlisten = cleanup;
+      if (disposed) cleanup();
+      else unlisten = cleanup;
     });
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [fixedPosition, snapEdge]);
 
   // When the queue becomes empty, return to the visible idle pill. The current
@@ -242,20 +276,24 @@ export function DynamicIsland({
     }
   }, [queue.length, mode, setMode, settingsOpen]);
 
-  // Click-through strategy. The OS window is 480×400 but mostly transparent.
-  // Only the ACTUAL PILL should capture clicks; the transparent surround must
-  // pass clicks through to apps below.
-  //   - expanded (full list): the pill fills most of the window → always
-  //     interactive (it's big enough that overPill would be flaky at the edges).
-  //   - card/idle/compact (small pill): interactive ONLY when the cursor is
-  //     directly over the pill (`overPill`, tracked by the backend watcher).
-  //     Otherwise the transparent area would block the desktop.
-  //   - hidden (notch): always click-through.
-  const visible = settingsOpen || mode !== "hidden";
-  const interactive = dragging || settingsOpen || (visible && overPill);
+  // Keep the idle pill visible briefly after a reminder/notification closes,
+  // then return to the hidden notch when there is nothing to show. Opening the
+  // settings panel cancels this timer so the panel stays available.
   useEffect(() => {
-    void setClickThrough(!interactive).catch(console.error);
-  }, [interactive]);
+    if (settingsOpen || dragging || !docked || overPill || mode !== "idle" || queue.length > 0) return;
+    const timer = window.setTimeout(() => {
+      if (!pendingDragRef.current && !draggingRef.current) setMode("hidden");
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [mode, queue.length, setMode, settingsOpen, dragging, docked, overPill]);
+
+  // Rust owns click-through and tests against the live native position.
+  // React only locks interaction while dragging or editing settings; hover
+  // events are informational and cannot overwrite native interaction state.
+  const visible = settingsOpen || mode !== "hidden";
+  useEffect(() => {
+    void setInteractionLock(dragging || settingsOpen).catch(console.error);
+  }, [dragging, settingsOpen]);
 
   useEffect(() => {
     void setWindowFocusable(settingsOpen).catch(console.error);
@@ -266,12 +304,10 @@ export function DynamicIsland({
   // click-through). Add a small padding so hover is forgiving at the edges,
   // especially when sliding in from the top.
   useEffect(() => {
-    // Never retain the large settings footprint after closing it.
-    useIslandStore.getState().setOverPill(false);
     const x = snapEdge === "left" ? 0 : snapEdge === "right" ? layoutWidth - g.width : (layoutWidth - g.width) / 2;
     const y = snapEdge === "bottom" ? layoutHeight - g.height : snapEdge === "top" ? PILL_TOP : (layoutHeight - g.height) / 2;
     void setPillRect(x, y, visible ? g.width : 0, visible ? g.height : 0).catch(console.error);
-  }, [g.width, g.height, layoutHeight, layoutWidth, positionRevision, visible, settingsOpen, snapEdge]);
+  }, [g.width, g.height, layoutHeight, layoutWidth, visible, settingsOpen, snapEdge]);
 
   const edgeLayout = {
     top: "absolute inset-x-0 top-0 flex h-full w-full items-start justify-center",
@@ -333,7 +369,7 @@ export function DynamicIsland({
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={finishWindowDrag}
-            onPointerCancel={finishWindowDrag}
+            onPointerCancel={() => { pendingDragRef.current = null; }}
             animate={{
               width: g.width,
               height: g.height,
@@ -373,8 +409,6 @@ export function DynamicIsland({
                     nextReminderAt={nextWaterReminderAt}
                     onResetCountdown={onResetWaterCountdown}
                     onClose={() => {
-                      void setClickThrough(true).catch(console.error);
-                      useIslandStore.getState().setOverPill(false);
                       // A reminder can arrive while this panel is open. Keep
                       // it visible when the user closes settings so they do
                       // not need to summon the island again from the top edge.

@@ -66,15 +66,14 @@ export async function dismissNotification(id: string): Promise<void> {
   await invoke("dismiss_notification", { id });
 }
 
-/** Toggle whole-window click-through. */
-let cursorUpdates: Promise<void> = Promise.resolve();
-export function setClickThrough(ignore: boolean): Promise<void> {
+/** Hold native interaction during drag/settings; otherwise Rust hit-tests. */
+let interactionUpdates: Promise<void> = Promise.resolve();
+export function setInteractionLock(active: boolean): Promise<void> {
   if (!RUNNING_IN_TAURI) return Promise.resolve();
-  // Serialize IPC so a late completion cannot restore stale interaction state.
-  cursorUpdates = cursorUpdates.catch(() => {}).then(() =>
-    getCurrentWindow().setIgnoreCursorEvents(ignore),
+  interactionUpdates = interactionUpdates.catch(() => {}).then(() =>
+    invoke<void>("set_interaction_lock", { active }),
   );
-  return cursorUpdates;
+  return interactionUpdates;
 }
 
 /** Subscribe to the water-reminder toggle from the system tray. */
@@ -134,6 +133,7 @@ export const ISLAND_POSITION_STORAGE_KEY = "dynamic-island.window-position.v1";
 
 export interface SavedIslandPosition {
   edge: SnapEdge;
+  docked: boolean;
   x: number;
   y: number;
 }
@@ -149,7 +149,7 @@ export function readSavedIslandPosition(): SavedIslandPosition | null {
       Number.isFinite(value.x) &&
       Number.isFinite(value.y)
     ) {
-      return { edge: value.edge, x: value.x!, y: value.y! };
+      return { edge: value.edge, docked: value.docked !== false, x: value.x!, y: value.y! };
     }
   } catch {
     // Ignore malformed local storage and use the default centered position.
@@ -165,16 +165,19 @@ export function saveIslandPosition(position: SavedIslandPosition): void {
   }
 }
 
-/** Snap a freely positioned island window to the nearest monitor edge. */
-export async function snapWindowToNearestEdge(): Promise<SavedIslandPosition> {
-  if (!RUNNING_IN_TAURI) return { edge: "top", x: 0, y: 0 };
-  return invoke<SavedIslandPosition>("snap_island");
+/** Only snap when the visible pill is within the magnetic edge threshold. */
+export async function snapWindowToNearestEdge(
+  edge: SnapEdge,
+  pill: { x: number; y: number; width: number; height: number },
+): Promise<SavedIslandPosition> {
+  if (!RUNNING_IN_TAURI) return { edge, docked: false, x: 0, y: 0 };
+  return invoke<SavedIslandPosition>("snap_island", { edge, pill });
 }
 
 /** Restore a saved physical screen position after the native window starts. */
-export async function restoreIslandPosition(x: number, y: number): Promise<void> {
+export async function restoreIslandPosition(position: SavedIslandPosition): Promise<void> {
   if (!RUNNING_IN_TAURI) return;
-  await invoke("restore_island_position", { x, y });
+  await invoke("restore_island_position", { ...position });
 }
 
 /** Re-center the island when fixed positioning is enabled. */

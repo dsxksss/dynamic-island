@@ -145,7 +145,7 @@ export function WaterReminderPanel({
           <div>
             <div className="text-[12px] font-medium">固定灵动岛位置</div>
             <div className="mt-0.5 text-[10px] text-white/40">
-              {fixedPosition ? "固定在当前屏幕顶部中央" : "拖动后吸附到最近的屏幕边缘"}
+              {fixedPosition ? "固定在当前屏幕顶部中央" : "自由拖动放置，非常靠近边缘时才吸附"}
             </div>
           </div>
           <button

@@ -9,7 +9,15 @@ use tauri::{
 };
 
 const WINDOW_EDGE_MARGIN: u32 = 12;
+// Keep ordinary magnetic docking tight. Releasing at the physical top edge is
+// handled separately by `drag_snap_edge` below.
 const SNAP_FLUSH_THRESHOLD: i32 = 16;
+
+// The top anchor is the physical display edge. Keep work-area reservations
+// for the other edges, especially the taskbar at the bottom.
+fn docking_bounds(display_top: i32, work: (i32, i32, i32, i32)) -> (i32, i32, i32, i32) {
+    (work.0, display_top, work.2, work.3)
+}
 
 #[cfg(windows)]
 fn work_area_for_window(window: &WebviewWindow) -> Option<(i32, i32, i32, i32)> {
@@ -34,12 +42,12 @@ fn work_area_for_window(window: &WebviewWindow) -> Option<(i32, i32, i32, i32)> 
     if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
         return None;
     }
-    Some((
+    Some(docking_bounds(info.rcMonitor.top, (
         info.rcWork.left,
         info.rcWork.top,
         info.rcWork.right,
         info.rcWork.bottom,
-    ))
+    )))
 }
 
 #[cfg(windows)]
@@ -61,12 +69,12 @@ fn work_area_for_point(x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
     if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
         return None;
     }
-    Some((
+    Some(docking_bounds(info.rcMonitor.top, (
         info.rcWork.left,
         info.rcWork.top,
         info.rcWork.right,
         info.rcWork.bottom,
-    ))
+    )))
 }
 
 /// Position the island window flush at the very top-center of its current
@@ -211,7 +219,7 @@ pub fn restore_position(window: &WebviewWindow, saved_x: i32, saved_y: i32, edge
 
     let (x, y) = if docked {
         (saved_x.clamp(left, (right - window_width).max(left)),
-         saved_y.clamp(top, (bottom - window_height).max(top)))
+         if edge == "top" { top } else { saved_y.clamp(top, (bottom - window_height).max(top)) })
     } else {
         // A free pill may be fully visible even when its transparent host is
         // partly outside the monitor. Preserve that exact position on restart.
@@ -243,14 +251,53 @@ fn magnetic_edge(pill: (i32, i32, i32, i32), bounds: (i32, i32, i32, i32)) -> Op
         .map(|(edge, _)| edge)
 }
 
+fn drag_snap_edge(
+    pill: (i32, i32, i32, i32),
+    bounds: (i32, i32, i32, i32),
+    cursor: Option<(i32, i32)>,
+    host_top: Option<i32>,
+) -> Option<&'static str> {
+    // A transparent 480x400 host can reach the display top before a pill
+    // aligned near the host's bottom does. Treat that clamped host position as
+    // an explicit top-docking gesture so the pill is laid out at y = 0.
+    if host_top.is_some_and(|y| y <= bounds.1) {
+        return Some("top");
+    }
+    // Windows can constrain the transparent host before a bottom/side-aligned
+    // pill reaches the top. Releasing at the physical top is explicit docking
+    // intent even if the visible pill remains farther below it.
+    if let Some((x, y)) = cursor {
+        if x >= bounds.0 && x < bounds.2 && y >= bounds.1 && y <= bounds.1 + 6 {
+            return Some("top");
+        }
+    }
+    magnetic_edge(pill, bounds)
+}
+
 #[cfg(test)]
 mod placement_tests {
-    use super::magnetic_edge;
+    use super::{docking_bounds, drag_snap_edge, magnetic_edge};
+
+    #[test]
+    fn top_uses_display_edge_while_bottom_keeps_taskbar_reservation() {
+        assert_eq!(docking_bounds(0, (0, 40, 1920, 1040)), (0, 0, 1920, 1040));
+        assert_eq!(docking_bounds(-1080, (-1920, -1040, 0, -40)), (-1920, -1080, 0, -40));
+    }
+
+    #[test]
+    fn release_at_top_docks_even_when_transparent_host_limits_pill() {
+        let pill = (600, 181, 750, 219);
+        let bounds = (0, 0, 1920, 1040);
+        assert_eq!(drag_snap_edge(pill, bounds, Some((675, 0)), Some(181)), Some("top"));
+        assert_eq!(drag_snap_edge(pill, bounds, Some((675, 100)), Some(181)), None);
+        assert_eq!(drag_snap_edge(pill, bounds, Some((2000, 0)), Some(181)), None);
+        assert_eq!(drag_snap_edge((-900, -899, -750, -861), (-1920, -1080, 0, -40), Some((-825, -1080)), Some(-899)), Some("top"));
+    }
 
     #[test]
     fn free_drop_does_not_snap_to_nearest_edge() {
         assert_eq!(magnetic_edge((600, 400, 750, 438), (0, 0, 1920, 1040)), None);
-        assert_eq!(magnetic_edge((17, 400, 167, 438), (0, 0, 1920, 1040)), None);
+        assert_eq!(magnetic_edge((65, 400, 215, 438), (0, 0, 1920, 1040)), None);
     }
 
     #[test]
@@ -312,9 +359,22 @@ pub fn snap_to_nearest_edge(window: &WebviewWindow, previous_edge: String, pill:
     let pill_y = client.y + px(pill.y);
     let pill_width = px(pill.width);
     let pill_height = px(pill.height);
-    let Some(edge) = magnetic_edge(
+    let cursor = {
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::POINT;
+            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+            let mut point = POINT::default();
+            unsafe { GetCursorPos(&mut point) }.ok().map(|_| (point.x, point.y))
+        }
+        #[cfg(not(windows))]
+        { None }
+    };
+    let Some(edge) = drag_snap_edge(
         (pill_x, pill_y, pill_x + pill_width, pill_y + pill_height),
         (monitor_left, monitor_top, monitor_right, monitor_bottom),
+        cursor,
+        Some(client.y),
     ) else {
         // Do not reposition or change the layout anchor on a free drop.
         return (previous_edge, false);

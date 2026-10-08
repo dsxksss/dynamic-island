@@ -3,81 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { WaterReminderSettings } from "../lib/types";
 import { startWaterReminderSound } from "../lib/sound";
 import { useIslandStore } from "../store/islandStore";
-
-const STORAGE_KEY = "dynamic-island.water-reminder.v2";
-const STATS_STORAGE_KEY = "dynamic-island.water-reminder.stats.v1";
-
-export const DEFAULT_WATER_REMINDER_SETTINGS: WaterReminderSettings = {
-  enabled: false,
-  startTime: "08:00",
-  endTime: "18:00",
-  intervalMinutes: 20,
-  durationSeconds: 30,
-  confirmHoldSeconds: 2,
-  confirmMethod: "hold",
-  soundEnabled: true,
-};
-
-function normalizeSettings(
-  value: Partial<WaterReminderSettings>,
-): WaterReminderSettings {
-  const interval = Number(value.intervalMinutes);
-  const duration = Number(value.durationSeconds);
-  const confirmHold = Number(value.confirmHoldSeconds);
-  return {
-    enabled: value.enabled === true,
-    startTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(value.startTime ?? "")
-      ? value.startTime!
-      : DEFAULT_WATER_REMINDER_SETTINGS.startTime,
-    endTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(value.endTime ?? "")
-      ? value.endTime!
-      : DEFAULT_WATER_REMINDER_SETTINGS.endTime,
-    intervalMinutes: Number.isFinite(interval)
-      ? Math.min(240, Math.max(1, Math.round(interval)))
-      : DEFAULT_WATER_REMINDER_SETTINGS.intervalMinutes,
-    soundEnabled: value.soundEnabled !== false,
-    durationSeconds: Number.isFinite(duration)
-      ? Math.min(300, Math.max(5, Math.round(duration)))
-      : DEFAULT_WATER_REMINDER_SETTINGS.durationSeconds,
-    confirmHoldSeconds: Number.isFinite(confirmHold)
-      ? Math.min(10, Math.max(0, Math.round(confirmHold)))
-      : DEFAULT_WATER_REMINDER_SETTINGS.confirmHoldSeconds,
-    confirmMethod: value.confirmMethod === "hover" ? "hover" : "hold",
-  };
-}
-
-function todayKey(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
-function readTodayCount(): number {
-  if (typeof window === "undefined") return 0;
-  try {
-    const raw = window.localStorage.getItem(STATS_STORAGE_KEY);
-    if (!raw) return 0;
-    const value = JSON.parse(raw) as { date?: string; count?: number };
-    return value.date === todayKey() && Number.isFinite(value.count)
-      ? Math.max(0, Math.floor(value.count!))
-      : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function readSettings(): WaterReminderSettings {
-  if (typeof window === "undefined") return DEFAULT_WATER_REMINDER_SETTINGS;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw
-      ? normalizeSettings(JSON.parse(raw) as Partial<WaterReminderSettings>)
-      : DEFAULT_WATER_REMINDER_SETTINGS;
-  } catch {
-    return DEFAULT_WATER_REMINDER_SETTINGS;
-  }
-}
+import { LEGACY_WATER_STATS_KEY, WATER_HISTORY_KEY, localDateKey, readWaterHistory, recordWater } from "../lib/waterHistory";
 
 function minutesFromTime(value: string): number {
   const [hours, minutes] = value.split(":").map(Number);
@@ -132,9 +58,12 @@ function getNextDueAt(now: Date, settings: WaterReminderSettings, anchorAt = now
   return now.getTime() + settings.intervalMinutes * 60_000;
 }
 
-export function useWaterReminder() {
-  const [settings, setSettings] = useState<WaterReminderSettings>(readSettings);
-  const [todayCount, setTodayCount] = useState(readTodayCount);
+export function useWaterReminder(settings: WaterReminderSettings, profile: string) {
+  const [history, setHistory] = useState(() => readWaterHistory({ getItem: (key) => window.localStorage.getItem(key) }));
+  const historyRef = useRef(history);
+  const [today, setToday] = useState(() => localDateKey());
+  const todayCount = history.days[today] ?? 0;
+  const confirmedIdRef = useRef<string | null>(null);
   const [nextReminderAt, setNextReminderAt] = useState<number | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -148,20 +77,19 @@ export function useWaterReminder() {
   const remove = useIslandStore((state) => state.remove);
 
   useEffect(() => {
-    settingsRef.current = settings;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    } catch {
-      // Local storage can be unavailable in restricted WebViews; reminders
-      // still work for the current session in that case.
-    }
-  }, [settings]);
-
-  useEffect(() => {
-    const refresh = () => setTodayCount(readTodayCount());
+    const refresh = () => setToday(localDateKey());
     const timer = window.setInterval(refresh, 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WATER_HISTORY_KEY, JSON.stringify(history));
+      window.localStorage.setItem(LEGACY_WATER_STATS_KEY, JSON.stringify({ date: today, count: todayCount }));
+    } catch {
+      // Keep session history intact if local storage is unavailable.
+    }
+  }, [history, today, todayCount]);
 
   useEffect(() => {
     stopSoundRef.current?.();
@@ -224,8 +152,8 @@ export function useWaterReminder() {
       if (!activeRef.current && activeWindow && dueAt >= activeWindow.start.getTime() && now.getTime() < expiresAt) {
         stopActive();
         const reminderId = `water-${dueAt}`;
-        activeRef.current = { id: reminderId, expiresAt, visible: true };
-        enqueue({
+        activeRef.current = { id: reminderId, expiresAt, visible: current.showPopup };
+        if (current.showPopup) enqueue({
             id: reminderId,
             appName: "喝水提醒",
             icon: "",
@@ -236,10 +164,10 @@ export function useWaterReminder() {
         });
         if (current.soundEnabled) stopSoundRef.current = startWaterReminderSound(expiresAt);
 
-        if (useIslandStore.getState().mode === "hidden") {
+        if (current.showPopup && useIslandStore.getState().mode === "hidden") {
           setMode("idle");
           revealTimer = window.setTimeout(() => setMode("card"), 60);
-        } else {
+        } else if (current.showPopup) {
           setMode("card");
         }
 
@@ -258,7 +186,7 @@ export function useWaterReminder() {
       stopActive();
       stopActiveRef.current = () => {};
     };
-  }, [enqueue, remove, setMode, settings.enabled, settings.endTime, settings.intervalMinutes, settings.startTime]);
+  }, [profile, enqueue, remove, setMode, settings.enabled, settings.endTime, settings.intervalMinutes, settings.startTime]);
 
   function resetCountdown() {
     const current = settingsRef.current;
@@ -275,20 +203,14 @@ export function useWaterReminder() {
   }
 
   function confirmWaterReminder(id: string) {
-    if (activeRef.current?.id !== id || typeof window === "undefined") return;
-    const date = todayKey();
-    const nextCount = readTodayCount() + 1;
-    setTodayCount(nextCount);
-    try {
-      window.localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify({ date, count: nextCount }));
-    } catch {
-      // The in-memory count remains available when storage is unavailable.
-    }
+    if (activeRef.current?.id !== id || confirmedIdRef.current === id || typeof window === "undefined") return;
+    confirmedIdRef.current = id;
+    const now = new Date();
+    const updated = recordWater(historyRef.current, now);
+    historyRef.current = updated;
+    setHistory(updated);
+    setToday(localDateKey(now));
   }
 
-  function updateSettings(patch: Partial<WaterReminderSettings>) {
-    setSettings((current) => normalizeSettings({ ...current, ...patch }));
-  }
-
-  return { settings, updateSettings, todayCount, nextReminderAt, confirmWaterReminder, resetCountdown };
+  return { settings, history, todayCount, nextReminderAt, confirmWaterReminder, resetCountdown };
 }

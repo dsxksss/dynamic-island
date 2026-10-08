@@ -466,6 +466,50 @@ impl PillRect {
     fn contains(self, x: i32, y: i32) -> bool {
         x >= self.x0 && x < self.x1 && y >= self.y0 && y < self.y1
     }
+
+    /// Minimal physical translation needed to fit the visible content. The
+    /// transparent host is allowed outside the display during free placement.
+    fn visibility_offset(self, bounds: (i32, i32, i32, i32)) -> (i32, i32) {
+        let (left, top, right, bottom) = bounds;
+        let x = self.x0.clamp(left, (right - (self.x1 - self.x0)).max(left));
+        let y = self.y0.clamp(top, (bottom - (self.y1 - self.y0)).max(top));
+        (x - self.x0, y - self.y0)
+    }
+}
+
+fn keep_pill_visible(window: &WebviewWindow, target: LogicalPillRect, previous: Option<LogicalPillRect>) {
+    let (Ok(origin), Ok(outer)) = (window.inner_position(), window.outer_position()) else {
+        return;
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let rect = target.on_screen(origin, scale);
+    // Choose the display containing the existing pill, not the transparent
+    // host or the expanded target, which may already cross a monitor boundary.
+    let anchor = previous.filter(|rect| rect.width > 0.0 && rect.height > 0.0)
+        .unwrap_or(target).on_screen(origin, scale);
+    let center = ((anchor.x0 + anchor.x1) / 2, (anchor.y0 + anchor.y1) / 2);
+    let bounds = {
+        #[cfg(windows)]
+        { work_area_for_point(center.0, center.1) }
+        #[cfg(not(windows))]
+        {
+            window.available_monitors().ok().and_then(|monitors| {
+                monitors.into_iter().find_map(|monitor| {
+                    let p = monitor.position();
+                    let s = monitor.size();
+                    let bounds = (p.x, p.y, p.x + s.width as i32, p.y + s.height as i32);
+                    (center.0 >= bounds.0 && center.0 < bounds.2
+                        && center.1 >= bounds.1 && center.1 < bounds.3).then_some(bounds)
+                })
+            })
+        }
+    };
+    if let Some(bounds) = bounds {
+        let (dx, dy) = rect.visibility_offset(bounds);
+        if dx != 0 || dy != 0 {
+            let _ = window.set_position(PhysicalPosition::new(outer.x + dx, outer.y + dy));
+        }
+    }
 }
 
 fn should_ignore_cursor(over_pill: bool, locked: bool, dragging: bool) -> bool {
@@ -476,8 +520,14 @@ fn should_ignore_cursor(over_pill: bool, locked: bool, dragging: bool) -> bool {
 /// currently is on screen, so the cursor watcher can detect "cursor over pill"
 /// even while the window is click-through. `x/y/w/h` are LOGICAL px relative to
 /// the window's top-left corner.
-pub fn set_pill_rect(_window: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
-    *PILL_RECT.lock() = Some(LogicalPillRect { x, y, width: w, height: h });
+pub fn set_pill_rect(window: &WebviewWindow, x: f64, y: f64, w: f64, h: f64, keep_visible: bool) {
+    let target = LogicalPillRect { x, y, width: w, height: h };
+    let previous = PILL_RECT.lock().replace(target);
+    // Never fight native dragging or move an invisible notch. React re-sends
+    // the final geometry after drag release, including when the size is unchanged.
+    if keep_visible && w > 0.0 && h > 0.0 && !NATIVE_DRAGGING.load(Ordering::Acquire) {
+        keep_pill_visible(window, target, previous);
+    }
     INTERACTION_REFRESH.store(true, Ordering::Release);
 }
 
@@ -636,6 +686,54 @@ mod hit_test_tests {
         assert!(!hidden.on_screen(PhysicalPosition::new(0, 0), 1.0).contains(165, 0));
         let idle = LogicalPillRect { x: 165.0, y: 0.0, width: 150.0, height: 38.0 };
         assert!(!idle.on_screen(PhysicalPosition::new(0, 0), 1.0).contains(250, 200));
+    }
+
+    #[test]
+    fn settings_expanding_near_right_edge_keeps_close_button_visible() {
+        let bounds = (0, 0, 1920, 1040);
+        let origin = PhysicalPosition::new(1575, 300);
+        let idle = LogicalPillRect { x: 165.0, y: 0.0, width: 150.0, height: 38.0 };
+        assert_eq!(idle.on_screen(origin, 1.0).visibility_offset(bounds), (0, 0));
+        let settings = LogicalPillRect { x: 24.0, y: 0.0, width: 432.0, height: 360.0 };
+        let (dx, dy) = settings.on_screen(origin, 1.0).visibility_offset(bounds);
+        assert_eq!((dx, dy), (-111, 0));
+        let fitted = settings.on_screen(PhysicalPosition::new(origin.x + dx, origin.y + dy), 1.0);
+        assert_eq!(fitted.x1, 1920);
+        assert!(fitted.contains(1885, 328));
+        assert_eq!(fitted.visibility_offset(bounds), (0, 0));
+    }
+
+    #[test]
+    fn expanded_panels_fit_all_edges_without_snapping() {
+        let panel = LogicalPillRect { x: 24.0, y: 0.0, width: 432.0, height: 360.0 };
+        for (origin, expected) in [
+            ((-140, 300), (116, 0)),
+            ((600, -25), (0, 25)),
+            ((600, 720), (0, -40)),
+            ((1575, 720), (-111, -40)),
+            ((600, 300), (0, 0)),
+        ] {
+            let rect = panel.on_screen(PhysicalPosition::new(origin.0, origin.1), 1.0);
+            assert_eq!(rect.visibility_offset((0, 0, 1920, 1040)), expected);
+        }
+    }
+
+    #[test]
+    fn expansion_uses_physical_dpi_and_negative_display_coordinates() {
+        let panel = LogicalPillRect { x: 24.0, y: 0.0, width: 432.0, height: 360.0 };
+        let rect = panel.on_screen(PhysicalPosition::new(2400, 1100), 1.5);
+        assert_eq!(rect.visibility_offset((0, 0, 2880, 1560)), (-204, -80));
+        let rect = panel.on_screen(PhysicalPosition::new(-2060, -1000), 1.25);
+        assert_eq!(rect.visibility_offset((-1920, -1080, 0, -40)), (110, 0));
+        let rect = panel.on_screen(PhysicalPosition::new(-210, -500), 1.0);
+        assert_eq!(rect.visibility_offset((-1920, -1080, 0, -40)), (-246, 0));
+    }
+
+    #[test]
+    fn free_idle_position_is_not_constrained_by_transparent_host() {
+        let idle = LogicalPillRect { x: 165.0, y: 0.0, width: 150.0, height: 38.0 };
+        let origin = PhysicalPosition::new(-140, 300);
+        assert_eq!(idle.on_screen(origin, 1.0).visibility_offset((0, 0, 1920, 1040)), (0, 0));
     }
 }
 

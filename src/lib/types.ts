@@ -11,6 +11,7 @@ export interface WaterReminderSettings {
   confirmHoldSeconds: number;
   confirmMethod: "hold" | "hover";
   soundEnabled: boolean;
+  showPopup: boolean;
 }
 
 export interface Notification {

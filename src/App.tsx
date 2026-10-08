@@ -1,5 +1,6 @@
 import { DynamicIsland } from "./components/DynamicIsland";
 import { useNotifications } from "./hooks/useNotifications";
+import { useReminderProfiles } from "./hooks/useReminderProfiles";
 import { useWaterReminder } from "./hooks/useWaterReminder";
 import { playWaterReminderChime } from "./lib/sound";
 import {
@@ -12,16 +13,6 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 const FIXED_POSITION_STORAGE_KEY = "dynamic-island.fixed-position.v1";
-const SYSTEM_NOTIFICATIONS_STORAGE_KEY = "dynamic-island.system-notifications.v2";
-
-function readSystemNotificationsEnabled(): boolean {
-  try {
-    return window.localStorage.getItem(SYSTEM_NOTIFICATIONS_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
 function readFixedPosition(): boolean {
   if (typeof window === "undefined") return true;
   try {
@@ -33,31 +24,27 @@ function readFixedPosition(): boolean {
 
 export default function App() {
   // Wire backend events + drive the auto-collapsing state machine / demo feed.
-  const [systemNotificationsEnabled, setSystemNotificationsEnabled] = useState(readSystemNotificationsEnabled);
+  const profiles = useReminderProfiles();
+  const currentProfile = profiles.profiles[profiles.active];
+  const systemNotificationsEnabled = currentProfile.systemNotificationsEnabled;
   useNotifications(systemNotificationsEnabled);
-  const waterReminder = useWaterReminder();
+  const waterReminder = useWaterReminder(currentProfile.water, profiles.active);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fixedPosition, setFixedPosition] = useState(readFixedPosition);
-  const waterReminderRef = useRef(waterReminder);
-  waterReminderRef.current = waterReminder;
+  const waterReminderRef = useRef({ waterReminder, profiles });
+  waterReminderRef.current = { waterReminder, profiles };
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(SYSTEM_NOTIFICATIONS_STORAGE_KEY, String(systemNotificationsEnabled));
-    } catch {
-      // The switch still applies for this session if storage is unavailable.
-    }
-  }, [systemNotificationsEnabled]);
-
-  useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     onWaterReminderTrayToggle(() => {
       const current = waterReminderRef.current;
-      current.updateSettings({ enabled: !current.settings.enabled });
+      current.profiles.updateWater(current.profiles.active, { enabled: !current.waterReminder.settings.enabled });
     }).then((cleanup) => {
-      unlisten = cleanup;
+      if (disposed) cleanup();
+      else unlisten = cleanup;
     });
-    return () => unlisten?.();
+    return () => { disposed = true; unlisten?.(); };
   }, []);
 
   useEffect(() => {
@@ -82,17 +69,16 @@ export default function App() {
     <div className="flex min-h-screen w-full select-none items-start justify-center">
       <DynamicIsland
         waterReminder={waterReminder.settings}
-        onWaterReminderChange={waterReminder.updateSettings}
+        profiles={profiles}
         fixedPosition={fixedPosition}
         onFixedPositionChange={setFixedPosition}
-        systemNotificationsEnabled={systemNotificationsEnabled}
-        onSystemNotificationsChange={setSystemNotificationsEnabled}
         settingsOpen={settingsOpen}
         onOpenSettings={() => setSettingsOpen(true)}
         onCloseSettings={() => setSettingsOpen(false)}
         onTestWaterSound={playWaterReminderChime}
         onWaterReminderConfirmed={waterReminder.confirmWaterReminder}
         todayWaterCount={waterReminder.todayCount}
+        waterHistory={waterReminder.history}
         nextWaterReminderAt={waterReminder.nextReminderAt}
         onResetWaterCountdown={waterReminder.resetCountdown}
       />

@@ -1,9 +1,11 @@
 //! Desktop Dynamic Island — Tauri backend entry point.
 
 mod identity;
+mod fullscreen;
 mod notification_listener;
 mod notifications;
 mod window_setup;
+mod startup;
 
 use tauri::{
     Emitter,
@@ -21,14 +23,19 @@ struct WaterTrayItem(Arc<Mutex<Option<MenuItem<Wry>>>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let Some(launch_guard) = startup::prepare() else { return; };
     let mut builder = tauri::Builder::default();
 
-    // Single-instance: the second launch is silently blocked (Windows mutex).
+    // Preflight handles switching EXEs before the legacy single-instance lock.
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {
-            // Second instance attempted — could focus the window here; we just
-            // ignore it.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|arg| arg == "--autostart") {
+                if let Some(window) = app.get_webview_window("island") {
+                    let _ = window.show();
+                    let _ = app.emit("island://top-hover", serde_json::json!({"hovering": true, "overPill": false}));
+                }
+            }
         }));
     }
 
@@ -38,7 +45,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--autostart"]),
         ))
-        .setup(|app| {
+        .setup(move |app| {
             let window: WebviewWindow = app
                 .get_webview_window("island")
                 .expect("island window is declared in tauri.conf.json");
@@ -55,6 +62,7 @@ pub fn run() {
             // island can be summoned by hovering the screen's top edge, and
             // reports whether the cursor is over the pill (for click-through).
             window_setup::start_cursor_watcher(app.handle().clone());
+            fullscreen::start(app.handle().clone());
 
             // --- system tray -------------------------------------------------
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -72,6 +80,12 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            // The plugin checks only the entry name, not which EXE it points
+            // to. Refresh its path even when Windows has disabled startup;
+            // leave StartupApproved untouched so that choice is respected.
+            if let Err(error) = startup::refresh_autostart(&app.package_info().name) {
+                startup::report(&format!("灵动岛已启动，但更新开机自启路径失败：{error}"));
+            }
             let autostart_on = app
                 .state::<tauri_plugin_autostart::AutoLaunchManager>()
                 .is_enabled()
@@ -119,15 +133,18 @@ pub fn run() {
                     "autostart" => {
                         let mgr = app_handle
                             .state::<tauri_plugin_autostart::AutoLaunchManager>();
-                        let now_on = if mgr.is_enabled().unwrap_or(false) {
-                            let _ = mgr.disable();
-                            false
-                        } else {
-                            let _ = mgr.enable();
-                            true
-                        };
-                        let _ = autostart_item_handle
-                            .set_text(if now_on { "✓ 开机自启" } else { "开机自启" });
+                        let result = mgr.is_enabled().and_then(|enabled| {
+                            if enabled { mgr.disable() } else { mgr.enable() }
+                        });
+                        if let Err(error) = result {
+                            startup::report(&format!("修改开机自启失败：{error}"));
+                        } else if let Err(error) = startup::refresh_autostart(&app_handle.package_info().name) {
+                            startup::report(&format!("更新开机自启路径失败：{error}"));
+                        }
+                        if let Ok(now_on) = mgr.is_enabled() {
+                            let _ = autostart_item_handle
+                                .set_text(if now_on { "✓ 开机自启" } else { "开机自启" });
+                        }
                     }
                     "water-toggle" => {
                         let _ = app_handle.emit("island://water-reminder-toggle", ());
@@ -150,9 +167,12 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Setup is complete and the single-instance plugin owns its lock.
+            drop(launch_guard);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_fullscreen_state,
             poll_notifications,
             get_listener_status,
             platform_info,
@@ -167,6 +187,12 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Initial snapshot used after subscribing to full-screen changes.
+#[tauri::command]
+fn get_fullscreen_state() -> bool {
+    fullscreen::current()
 }
 
 /// Poll for new system toast notifications. Called by the frontend every ~2.5s.
@@ -208,9 +234,10 @@ fn set_pill_rect_cmd(
     y: f64,
     width: f64,
     height: f64,
+    keep_visible: bool,
 ) {
     if let Some(window) = app.get_webview_window("island") {
-        window_setup::set_pill_rect(&window, x, y, width, height);
+        window_setup::set_pill_rect(&window, x, y, width, height, keep_visible);
     }
 }
 

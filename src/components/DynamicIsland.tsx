@@ -32,9 +32,12 @@ import { useIslandStore } from "../store/islandStore";
 import { IdlePill } from "./IdlePill";
 import { NotificationList } from "./NotificationList";
 import { NotificationView } from "./NotificationView";
+import type { ReminderProfilesController } from "../hooks/useReminderProfiles";
+import { ModeTransition } from "./ModeTransition";
 import { WaterReminderPanel } from "./WaterReminderPanel";
 import { WaterReminderView } from "./WaterReminderView";
 import type { WaterReminderSettings } from "../lib/types";
+import type { WaterHistory } from "../lib/waterHistory";
 
 const MORPH_SPRING = { type: "spring", stiffness: 380, damping: 30 } as const;
 const SLIDE_SPRING = { type: "spring", stiffness: 300, damping: 28 } as const;
@@ -44,17 +47,16 @@ const WIN_H = 400;
 
 interface DynamicIslandProps {
   waterReminder: WaterReminderSettings;
-  onWaterReminderChange: (patch: Partial<WaterReminderSettings>) => void;
+  profiles: ReminderProfilesController;
   fixedPosition: boolean;
   onFixedPositionChange: (fixed: boolean) => void;
-  systemNotificationsEnabled: boolean;
-  onSystemNotificationsChange: (enabled: boolean) => void;
   settingsOpen: boolean;
   onOpenSettings: () => void;
   onCloseSettings: () => void;
   onTestWaterSound: () => void;
   onWaterReminderConfirmed: (id: string) => void;
   todayWaterCount: number;
+  waterHistory: WaterHistory;
   nextWaterReminderAt: number | null;
   onResetWaterCountdown: () => void;
 }
@@ -102,17 +104,16 @@ function useViewportSize() {
 
 export function DynamicIsland({
   waterReminder,
-  onWaterReminderChange,
+  profiles,
   fixedPosition,
   onFixedPositionChange,
-  systemNotificationsEnabled,
-  onSystemNotificationsChange,
   settingsOpen,
   onOpenSettings,
   onCloseSettings,
   onTestWaterSound,
   onWaterReminderConfirmed,
   todayWaterCount,
+  waterHistory,
   nextWaterReminderAt,
   onResetWaterCountdown,
 }: DynamicIslandProps) {
@@ -145,8 +146,10 @@ export function DynamicIsland({
     setDocked(fixedPosition || (readSavedIslandPosition()?.docked ?? false));
   }, [fixedPosition, setDocked]);
 
+  const showTransition = !!profiles.transition && !settingsOpen && !dragging;
   const g = settingsOpen
     ? { width: Math.max(1, Math.min(432, layoutWidth - 16)), height: 360, radius: 34 }
+    : showTransition ? { width: Math.min(300, layoutWidth - 16), height: 66, radius: 28 }
     : pillGeometry(mode, layoutWidth);
 
   function finishWindowDrag() {
@@ -186,6 +189,7 @@ export function DynamicIsland({
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     if (
       fixedPosition ||
+      showTransition ||
       dragging ||
       settingsOpen ||
       mode === "expanded" ||
@@ -290,7 +294,7 @@ export function DynamicIsland({
   // Rust owns click-through and tests against the live native position.
   // React only locks interaction while dragging or editing settings; hover
   // events are informational and cannot overwrite native interaction state.
-  const visible = settingsOpen || mode !== "hidden";
+  const visible = settingsOpen || showTransition || mode !== "hidden";
   useEffect(() => {
     void setInteractionLock(dragging || settingsOpen).catch(console.error);
   }, [dragging, settingsOpen]);
@@ -306,8 +310,10 @@ export function DynamicIsland({
   useEffect(() => {
     const x = snapEdge === "left" ? 0 : snapEdge === "right" ? layoutWidth - g.width : (layoutWidth - g.width) / 2;
     const y = snapEdge === "bottom" ? layoutHeight - g.height : snapEdge === "top" ? PILL_TOP : (layoutHeight - g.height) / 2;
-    void setPillRect(x, y, visible ? g.width : 0, visible ? g.height : 0).catch(console.error);
-  }, [g.width, g.height, layoutHeight, layoutWidth, visible, settingsOpen, snapEdge]);
+    // Fit the expanded content on its display without constraining a native
+    // drag. Re-send on release even if neither size nor layout anchor changed.
+    void setPillRect(x, y, visible ? g.width : 0, visible ? g.height : 0, !dragging).catch(console.error);
+  }, [g.width, g.height, layoutHeight, layoutWidth, visible, settingsOpen, snapEdge, dragging]);
 
   const edgeLayout = {
     top: "absolute inset-x-0 top-0 flex h-full w-full items-start justify-center",
@@ -330,6 +336,7 @@ export function DynamicIsland({
 
   // Click: card -> expanded (open the full list); expanded -> card.
   function handleClick() {
+    if (showTransition) return;
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
       return;
@@ -345,6 +352,7 @@ export function DynamicIsland({
   // (onTopHover) is the single authority for show/hide to avoid feedback loops.
   // We only use mouseenter to eagerly open the card when hovering the idle pill.
   function handleEnter() {
+    if (showTransition) return;
     if (settingsOpen) return;
     if (queue.length > 0 && modeRef.current === "idle") setMode("card");
   }
@@ -374,9 +382,9 @@ export function DynamicIsland({
               width: g.width,
               height: g.height,
               borderRadius: g.radius,
-              opacity: !settingsOpen && mode === "hidden" ? 0 : 1,
-              x: !settingsOpen && mode === "hidden" ? hiddenOffset.x : 0,
-              y: !settingsOpen && mode === "hidden" ? hiddenOffset.y : 0,
+              opacity: !visible ? 0 : 1,
+              x: !visible ? hiddenOffset.x : 0,
+              y: !visible ? hiddenOffset.y : 0,
             }}
             transition={MORPH_SPRING}
             style={{
@@ -389,7 +397,9 @@ export function DynamicIsland({
             className={`relative overflow-hidden ${fixedPosition ? "" : dragging ? "cursor-grabbing" : "cursor-grab"}`}
           >
             <AnimatePresence mode="popLayout" initial={false}>
-              {settingsOpen ? (
+              {showTransition ? (
+                <ModeTransition key={`mode-${profiles.transition}`} mode={profiles.transition!} />
+              ) : settingsOpen ? (
                 <motion.div
                   key="water-settings"
                   initial={{ opacity: 0, y: 8 }}
@@ -399,13 +409,16 @@ export function DynamicIsland({
                   className="h-full w-full"
                 >
                   <WaterReminderPanel
-                    settings={waterReminder}
-                    onChange={onWaterReminderChange}
+                    key={profiles.editing}
+                    profiles={profiles}
+                    settings={profiles.profiles[profiles.editing].water}
+                    onChange={(patch) => profiles.updateWater(profiles.editing, patch)}
                     fixedPosition={fixedPosition}
                     onFixedPositionChange={onFixedPositionChange}
-                    systemNotificationsEnabled={systemNotificationsEnabled}
-                    onSystemNotificationsChange={onSystemNotificationsChange}
+                    systemNotificationsEnabled={profiles.profiles[profiles.editing].systemNotificationsEnabled}
+                    onSystemNotificationsChange={(enabled) => profiles.setNotifications(profiles.editing, enabled)}
                     todayCount={todayWaterCount}
+                    history={waterHistory}
                     nextReminderAt={nextWaterReminderAt}
                     onResetCountdown={onResetWaterCountdown}
                     onClose={() => {
@@ -480,7 +493,7 @@ export function DynamicIsland({
             {/* System notifications use a five-second auto-close countdown.
                 Keep it out of the settings surface, and never show it for
                 the water reminder card whose timeout is handled separately. */}
-            {!settingsOpen && mode === "card" && queue[0]?.kind === "generic" && (
+            {!settingsOpen && !showTransition && mode === "card" && queue[0]?.kind === "generic" && (
               <motion.div
                 key="progress"
                 className="absolute bottom-0 left-3 right-3 h-[2px] overflow-hidden rounded-full bg-white/10"

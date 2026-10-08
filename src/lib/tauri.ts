@@ -11,6 +11,16 @@ import type { ListenerStatus, Notification, PlatformInfo } from "./types";
 const RUNNING_IN_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+export async function getFullscreenState(): Promise<boolean> {
+  if (!RUNNING_IN_TAURI) return false;
+  return invoke<boolean>("get_fullscreen_state");
+}
+
+export function onFullscreenChange(cb: (fullscreen: boolean) => void): Promise<UnlistenFn> {
+  if (!RUNNING_IN_TAURI) return Promise.resolve(() => {});
+  return listen<boolean>("island://fullscreen", (event) => cb(event.payload));
+}
+
 /** Poll the backend for new system toast notifications. Returns only newly-seen
  *  ones (deduped by the backend). The frontend calls this every ~2.5s. */
 export async function pollNotifications(): Promise<Notification[]> {
@@ -43,9 +53,10 @@ export async function setPillRect(
   y: number,
   width: number,
   height: number,
+  keepVisible = true,
 ): Promise<void> {
   if (!RUNNING_IN_TAURI) return;
-  await invoke("set_pill_rect_cmd", { x, y, width, height });
+  await invoke("set_pill_rect_cmd", { x, y, width, height, keepVisible });
 }
 
 /** Pull the current listener status synchronously. */

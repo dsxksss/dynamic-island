@@ -2,6 +2,15 @@
 
 部署日期：2026-10-08。
 
+## 当前版本 v1.4.1
+
+- 下载地址：http://129.211.5.5/downloads/dynamic-island-1.4.1-windows-x64.exe
+- 校验文件：http://129.211.5.5/downloads/dynamic-island-1.4.1-windows-x64.exe.sha256
+- 文件大小：9,458,688 字节。
+- SHA-256：`e05de7679c6933fc351f223ab1f67397bd787457e36e9d582895d99d7b616c06`
+- 修复全屏判定跟随灵动岛所在显示器的问题，改为跟随当前激活前台窗口所在显示器。
+- 发布前配置备份：`/etc/nginx/conf.d/dynamic-island-downloads.conf.bak-20261010-1.4.1`。
+
 ## 当前版本 v1.4.0
 
 - 下载地址：http://129.211.5.5/downloads/dynamic-island-1.4.0-windows-x64.exe

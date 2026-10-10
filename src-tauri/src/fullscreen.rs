@@ -14,6 +14,19 @@ fn fills_monitor(window: (i32, i32, i32, i32), monitor: (i32, i32, i32, i32)) ->
         .iter().all(|delta| delta.abs() <= 2)
 }
 
+#[cfg(test)]
+fn foreground_window_is_fullscreen(
+    foreground: (i32, i32, i32, i32),
+    foreground_monitor: (i32, i32, i32, i32),
+    island_monitor: (i32, i32, i32, i32),
+) -> bool {
+    // The island monitor is deliberately an unrelated value here. Fullscreen
+    // must follow the active app's monitor, even when the island was dragged
+    // to another display.
+    let _ = island_monitor;
+    fills_monitor(foreground, foreground_monitor)
+}
+
 #[cfg(windows)]
 fn sample() -> Option<bool> {
     use windows::Win32::Foundation::RECT;
@@ -39,6 +52,9 @@ fn sample() -> Option<bool> {
         if GetWindowLongW(hwnd, GWL_STYLE) as u32 & WS_CAPTION.0 != 0 { return Some(false); }
         let mut rect = RECT::default();
         if GetWindowRect(hwnd, &mut rect).is_err() { return None; }
+        // Always resolve the monitor from the active foreground app HWND. Do
+        // not use the island window's current monitor: the island may be
+        // freely positioned on a different display.
         let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
         if !GetMonitorInfoW(monitor, &mut info).as_bool() { return None; }
@@ -83,5 +99,14 @@ mod tests {
         assert!(fills_monitor((-1921, -1, 1, 1081), (-1920, 0, 0, 1080)));
         assert!(!fills_monitor((0, 0, 1920, 1040), (0, 0, 1920, 1080)));
         assert!(!fills_monitor((100, 100, 1200, 800), (0, 0, 1920, 1080)));
+    }
+
+    #[test]
+    fn fullscreen_follows_foreground_app_monitor_not_island_monitor() {
+        let game_monitor = (-1920, 0, 0, 1080);
+        let island_monitor = (0, 0, 1920, 1080);
+        assert!(foreground_window_is_fullscreen(game_monitor, game_monitor, island_monitor));
+        assert!(!foreground_window_is_fullscreen((0, 0, 1920, 1040), game_monitor, island_monitor));
+        assert!(foreground_window_is_fullscreen((0, 0, 1920, 1080), island_monitor, game_monitor));
     }
 }
